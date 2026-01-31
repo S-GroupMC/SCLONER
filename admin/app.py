@@ -136,6 +136,10 @@ class WgetJob:
 
 def build_wget_command(job):
     """Build wget command from job options"""
+    print(f"[DEBUG] Building command for job {job.id}")
+    print(f"[DEBUG] Options: {job.options}")
+    print(f"[DEBUG] include_subdomains: {job.options.get('include_subdomains')}")
+    print(f"[DEBUG] extra_domains: {job.options.get('extra_domains')}")
     if job.use_wget2:
         cmd = [WGET2_PATH]
         # wget2-specific optimizations (all verified options)
@@ -304,6 +308,7 @@ def build_wget_command(job):
     # URL
     cmd.append(job.url)
     
+    print(f"[DEBUG] Final wget command: {' '.join(cmd)}")
     return cmd
 
 

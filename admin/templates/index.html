@@ -498,7 +498,12 @@
     </template>
 
     <script>
-        const socket = io();
+        const socket = io({
+            transports: ['polling'],
+            upgrade: false,
+            pingInterval: 10000,
+            pingTimeout: 5000
+        });
         const jobs = new Map();
         
         // Socket events
