@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wget Admin - Website Cloner</title>
+    <title>Wget Admin - Клонирование сайтов</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.0/socket.io.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
@@ -36,15 +36,15 @@
                     <i class="fas fa-download text-3xl"></i>
                     <div>
                         <h1 class="text-2xl font-bold">Wget Admin</h1>
-                        <p class="text-purple-200 text-sm">Website Cloner & Downloader</p>
+                        <p class="text-purple-200 text-sm">Клонирование и загрузка сайтов</p>
                     </div>
                 </div>
                 <div class="text-right">
-                    <span class="text-purple-200 text-sm">Powered by GNU Wget</span>
+                    <span class="text-purple-200 text-sm">На базе GNU Wget</span>
                     <div class="text-purple-200 text-xs mt-1">
                         <i class="fas fa-folder mr-1"></i>
                         <span id="downloadsPath">{{ downloads_dir }}</span>
-                        <button onclick="openDownloadsFolder()" class="ml-2 hover:text-white" title="Open folder">
+                        <button onclick="openDownloadsFolder()" class="ml-2 hover:text-white" title="Открыть папку">
                             <i class="fas fa-external-link-alt"></i>
                         </button>
                     </div>
@@ -58,13 +58,13 @@
         <div class="bg-white rounded-xl card-shadow p-6 mb-8">
             <h2 class="text-xl font-semibold text-gray-800 mb-4">
                 <i class="fas fa-plus-circle text-purple-600 mr-2"></i>
-                Clone Website
+                Клонировать сайт
             </h2>
             
             <form id="newJobForm" class="space-y-4">
                 <!-- URL Input -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Website URL</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Адрес сайта</label>
                     <div class="flex">
                         <span class="inline-flex items-center px-3 rounded-l-lg border border-r-0 border-gray-300 bg-gray-50 text-gray-500">
                             <i class="fas fa-globe"></i>
@@ -77,22 +77,22 @@
 
                 <!-- Presets -->
                 <div class="flex flex-wrap gap-2">
-                    <span class="text-sm text-gray-600 mr-2">Presets:</span>
+                    <span class="text-sm text-gray-600 mr-2">Пресеты:</span>
                     <button type="button" onclick="applyPreset('quick')" class="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200">
-                        <i class="fas fa-bolt mr-1"></i>Quick
+                        <i class="fas fa-bolt mr-1"></i>Быстрый
                     </button>
                     <button type="button" onclick="applyPreset('full')" class="px-3 py-1 text-xs bg-green-100 text-green-700 rounded-full hover:bg-green-200">
-                        <i class="fas fa-clone mr-1"></i>Full Mirror
+                        <i class="fas fa-clone mr-1"></i>Полное зеркало
                     </button>
                     <button type="button" onclick="applyPreset('stealth')" class="px-3 py-1 text-xs bg-purple-100 text-purple-700 rounded-full hover:bg-purple-200">
-                        <i class="fas fa-user-secret mr-1"></i>Stealth
+                        <i class="fas fa-user-secret mr-1"></i>Скрытный
                     </button>
                 </div>
 
                 <!-- Options Toggle -->
                 <div>
                     <button type="button" id="toggleOptions" class="text-purple-600 hover:text-purple-800 text-sm font-medium">
-                        <i class="fas fa-cog mr-1"></i> Advanced Options
+                        <i class="fas fa-cog mr-1"></i> Расширенные настройки
                         <i class="fas fa-chevron-down ml-1" id="optionsChevron"></i>
                     </button>
                 </div>
@@ -102,12 +102,12 @@
                     <!-- Recursive -->
                     <div class="flex items-center">
                         <input type="checkbox" id="recursive" checked class="w-4 h-4 text-purple-600 rounded">
-                        <label for="recursive" class="ml-2 text-sm text-gray-700">Recursive download</label>
+                        <label for="recursive" class="ml-2 text-sm text-gray-700">Рекурсивная загрузка</label>
                     </div>
                     
                     <!-- Depth -->
                     <div>
-                        <label class="block text-sm text-gray-700 mb-1">Depth level</label>
+                        <label class="block text-sm text-gray-700 mb-1">Глубина</label>
                         <input type="number" id="depth" value="2" min="1" max="10"
                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                     </div>
@@ -115,30 +115,30 @@
                     <!-- Page Requisites -->
                     <div class="flex items-center">
                         <input type="checkbox" id="pageRequisites" checked class="w-4 h-4 text-purple-600 rounded">
-                        <label for="pageRequisites" class="ml-2 text-sm text-gray-700">Download CSS/JS/Images</label>
+                        <label for="pageRequisites" class="ml-2 text-sm text-gray-700">Загружать CSS/JS/изображения</label>
                     </div>
                     
                     <!-- Convert Links -->
                     <div class="flex items-center">
                         <input type="checkbox" id="convertLinks" checked class="w-4 h-4 text-purple-600 rounded">
-                        <label for="convertLinks" class="ml-2 text-sm text-gray-700">Convert links for offline</label>
+                        <label for="convertLinks" class="ml-2 text-sm text-gray-700">Конвертировать ссылки для оффлайн</label>
                     </div>
                     
                     <!-- Span Hosts -->
                     <div class="flex items-center">
                         <input type="checkbox" id="spanHosts" class="w-4 h-4 text-purple-600 rounded">
-                        <label for="spanHosts" class="ml-2 text-sm text-gray-700">Download from other hosts</label>
+                        <label for="spanHosts" class="ml-2 text-sm text-gray-700">Загружать с других хостов</label>
                     </div>
                     
                     <!-- Include Subdomains -->
                     <div class="flex items-center">
                         <input type="checkbox" id="includeSubdomains" class="w-4 h-4 text-purple-600 rounded">
-                        <label for="includeSubdomains" class="ml-2 text-sm text-gray-700">Include subdomains</label>
+                        <label for="includeSubdomains" class="ml-2 text-sm text-gray-700">Включать поддомены</label>
                     </div>
                     
                     <!-- Extra Domains -->
                     <div>
-                        <label class="block text-sm text-gray-700 mb-1">Extra domains (CDN, etc)</label>
+                        <label class="block text-sm text-gray-700 mb-1">Доп. домены (CDN и т.д.)</label>
                         <input type="text" id="extraDomains" placeholder="cdn.example.com,images.example.com"
                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                     </div>
@@ -146,14 +146,14 @@
                     <!-- No Parent -->
                     <div class="flex items-center">
                         <input type="checkbox" id="noParent" checked class="w-4 h-4 text-purple-600 rounded">
-                        <label for="noParent" class="ml-2 text-sm text-gray-700">Stay in directory</label>
+                        <label for="noParent" class="ml-2 text-sm text-gray-700">Оставаться в каталоге</label>
                     </div>
                     
                     <!-- Rate Limit -->
                     <div>
-                        <label class="block text-sm text-gray-700 mb-1">Rate limit</label>
+                        <label class="block text-sm text-gray-700 mb-1">Ограничение скорости</label>
                         <select id="rateLimit" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
-                            <option value="">No limit</option>
+                            <option value="">Без ограничений</option>
                             <option value="100k">100 KB/s</option>
                             <option value="500k" selected>500 KB/s</option>
                             <option value="1m">1 MB/s</option>
@@ -163,7 +163,7 @@
                     
                     <!-- Wait -->
                     <div>
-                        <label class="block text-sm text-gray-700 mb-1">Wait between requests (sec)</label>
+                        <label class="block text-sm text-gray-700 mb-1">Пауза между запросами (сек)</label>
                         <input type="number" id="wait" value="0.5" min="0" max="10" step="0.1"
                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                     </div>
@@ -171,14 +171,14 @@
                     <!-- Random Wait -->
                     <div class="flex items-center">
                         <input type="checkbox" id="randomWait" class="w-4 h-4 text-purple-600 rounded">
-                        <label for="randomWait" class="ml-2 text-sm text-gray-700">Random wait</label>
+                        <label for="randomWait" class="ml-2 text-sm text-gray-700">Случайная пауза</label>
                     </div>
                     
                     <!-- User Agent -->
                     <div class="md:col-span-2">
                         <label class="block text-sm text-gray-700 mb-1">User Agent</label>
                         <select id="userAgent" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
-                            <option value="">Default (Wget)</option>
+                            <option value="">По умолчанию (Wget)</option>
                             <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36">Chrome (Mac)</option>
                             <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36">Chrome (Windows)</option>
                             <option value="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)">Googlebot</option>
@@ -187,50 +187,50 @@
                     
                     <!-- Reject -->
                     <div>
-                        <label class="block text-sm text-gray-700 mb-1">Reject files</label>
+                        <label class="block text-sm text-gray-700 mb-1">Исключить файлы</label>
                         <input type="text" id="reject" placeholder="*.mp4,*.zip"
                                class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                     </div>
                     
                     <!-- Separator -->
                     <div class="col-span-full border-t border-gray-200 my-2"></div>
-                    <div class="col-span-full text-xs text-gray-500 font-medium">Advanced</div>
+                    <div class="col-span-full text-xs text-gray-500 font-medium">Дополнительно</div>
                     
                     <!-- Ignore robots.txt -->
                     <div class="flex items-center">
                         <input type="checkbox" id="ignoreRobots" class="w-4 h-4 text-purple-600 rounded">
-                        <label for="ignoreRobots" class="ml-2 text-sm text-gray-700">Ignore robots.txt</label>
+                        <label for="ignoreRobots" class="ml-2 text-sm text-gray-700">Игнорировать robots.txt</label>
                     </div>
                     
                     <!-- No cookies -->
                     <div class="flex items-center">
                         <input type="checkbox" id="noCookies" class="w-4 h-4 text-purple-600 rounded">
-                        <label for="noCookies" class="ml-2 text-sm text-gray-700">No cookies</label>
+                        <label for="noCookies" class="ml-2 text-sm text-gray-700">Без cookies</label>
                     </div>
                     
                     <!-- Mirror mode -->
                     <div class="flex items-center">
                         <input type="checkbox" id="mirrorMode" class="w-4 h-4 text-purple-600 rounded">
-                        <label for="mirrorMode" class="ml-2 text-sm text-gray-700">Mirror mode (infinite depth)</label>
+                        <label for="mirrorMode" class="ml-2 text-sm text-gray-700">Режим зеркала (бесконечная глубина)</label>
                     </div>
                     
                     <!-- Restrict file names -->
                     <div class="flex items-center">
                         <input type="checkbox" id="restrictFileNames" checked class="w-4 h-4 text-purple-600 rounded">
-                        <label for="restrictFileNames" class="ml-2 text-sm text-gray-700">Fix file names</label>
+                        <label for="restrictFileNames" class="ml-2 text-sm text-gray-700">Исправлять имена файлов</label>
                     </div>
                     
                     <!-- Trust server names -->
                     <div class="flex items-center">
                         <input type="checkbox" id="trustServerNames" checked class="w-4 h-4 text-purple-600 rounded">
-                        <label for="trustServerNames" class="ml-2 text-sm text-gray-700">Trust server names</label>
+                        <label for="trustServerNames" class="ml-2 text-sm text-gray-700">Доверять именам сервера</label>
                     </div>
                 </div>
 
                 <!-- Engine Selection -->
                 <div class="p-3 bg-gray-50 rounded-lg">
                     <div class="flex items-center justify-between mb-3">
-                        <span class="text-sm text-gray-700 font-medium">Engine:</span>
+                        <span class="text-sm text-gray-700 font-medium">Движок:</span>
                         <div class="flex space-x-2">
                             <button type="button" onclick="selectEngine('smart')" id="btnSmart" class="engine-btn px-3 py-1.5 text-sm rounded-lg bg-gradient-to-r from-purple-600 via-blue-600 to-orange-500 text-white">
                                 <i class="fas fa-magic mr-1"></i>Smart
@@ -251,37 +251,37 @@
                     
                     <!-- Engine descriptions -->
                     <div id="engineDesc" class="text-xs text-gray-500 mb-3">
-                        <span id="descSmart"><i class="fas fa-magic text-purple-500 mr-1"></i>All engines combined: wget2 + Puppeteer + HTTrack - Maximum coverage</span>
-                        <span id="descWget2" class="hidden"><i class="fas fa-bolt text-green-500 mr-1"></i>HTTP/2, Multi-thread, Brotli - Fast static sites</span>
-                        <span id="descPuppeteer" class="hidden"><i class="fas fa-chrome text-blue-500 mr-1"></i>JS Rendering, Pagination, Show More - Dynamic sites (SPA)</span>
-                        <span id="descHttrack" class="hidden"><i class="fas fa-spider text-orange-500 mr-1"></i>Smart navigation, Forms support - Complex sites</span>
+                        <span id="descSmart"><i class="fas fa-magic text-purple-500 mr-1"></i>Все движки: wget2 + Puppeteer + HTTrack - Максимальный охват</span>
+                        <span id="descWget2" class="hidden"><i class="fas fa-bolt text-green-500 mr-1"></i>HTTP/2, Многопоточность, Brotli - Быстрые статические сайты</span>
+                        <span id="descPuppeteer" class="hidden"><i class="fas fa-chrome text-blue-500 mr-1"></i>JS рендеринг, Пагинация - Динамические сайты (SPA)</span>
+                        <span id="descHttrack" class="hidden"><i class="fas fa-spider text-orange-500 mr-1"></i>Умная навигация, Формы - Сложные сайты</span>
                     </div>
                     <!-- wget2 specific options -->
                     <div id="wget2Options" class="mt-3 pt-3 border-t border-gray-200">
                         <div class="grid grid-cols-2 gap-3">
                             <div class="bg-purple-50 rounded-lg p-3">
-                                <label class="block text-xs text-purple-600 font-medium mb-1">Parallel threads</label>
+                                <label class="block text-xs text-purple-600 font-medium mb-1">Параллельные потоки</label>
                                 <input type="number" id="parallelThreads" value="10" min="1" max="20"
                                        class="w-full border border-purple-200 rounded px-3 py-2 text-sm bg-white">
                             </div>
                             <div class="bg-purple-50 rounded-lg p-3">
-                                <label class="block text-xs text-purple-600 font-medium mb-1">Chunk size (for large files)</label>
+                                <label class="block text-xs text-purple-600 font-medium mb-1">Размер части (для больших файлов)</label>
                                 <select id="chunkSize" class="w-full border border-purple-200 rounded px-3 py-2 text-sm bg-white">
-                                    <option value="">Disabled</option>
+                                    <option value="">Отключено</option>
                                     <option value="1M">1 MB</option>
                                     <option value="5M">5 MB</option>
                                     <option value="10M">10 MB</option>
                                 </select>
                             </div>
                             <div class="bg-purple-50 rounded-lg p-3">
-                                <label class="block text-xs text-purple-600 font-medium mb-1">HTTP/2 window</label>
+                                <label class="block text-xs text-purple-600 font-medium mb-1">Окно HTTP/2</label>
                                 <input type="number" id="http2Window" value="30" min="1" max="100"
                                        class="w-full border border-purple-200 rounded px-3 py-2 text-sm bg-white">
                             </div>
                             <div class="bg-purple-50 rounded-lg p-3 flex items-center justify-between">
                                 <div class="flex items-center">
                                     <input type="checkbox" id="progressBar" checked class="w-4 h-4 text-purple-600 rounded">
-                                    <label for="progressBar" class="ml-2 text-sm text-gray-700">Progress bar</label>
+                                    <label for="progressBar" class="ml-2 text-sm text-gray-700">Прогресс</label>
                                 </div>
                                 <div class="flex items-center">
                                     <input type="checkbox" id="metalink" class="w-4 h-4 text-purple-600 rounded">
@@ -295,37 +295,37 @@
                     <div id="puppeteerOptions" class="hidden mt-3 pt-3 border-t border-gray-200">
                         <div class="grid grid-cols-2 gap-3">
                             <div class="bg-blue-50 rounded-lg p-3">
-                                <label class="block text-xs text-blue-600 font-medium mb-1">Max pages</label>
+                                <label class="block text-xs text-blue-600 font-medium mb-1">Макс. страниц</label>
                                 <input type="number" id="maxPages" value="100" min="1" max="1000"
                                        class="w-full border border-blue-200 rounded px-3 py-2 text-sm bg-white">
                             </div>
                             <div class="bg-blue-50 rounded-lg p-3">
-                                <label class="block text-xs text-blue-600 font-medium mb-1">JS Wait (ms)</label>
+                                <label class="block text-xs text-blue-600 font-medium mb-1">Ожидание JS (мс)</label>
                                 <input type="number" id="jsWait" value="2000" min="500" max="10000"
                                        class="w-full border border-blue-200 rounded px-3 py-2 text-sm bg-white">
                             </div>
                             <div class="bg-blue-50 rounded-lg p-3 flex items-center">
                                 <input type="checkbox" id="jsScroll" checked class="w-4 h-4 text-blue-600 rounded">
-                                <label for="jsScroll" class="ml-2 text-sm text-gray-700">Auto-scroll (infinite scroll)</label>
+                                <label for="jsScroll" class="ml-2 text-sm text-gray-700">Авто-прокрутка</label>
                             </div>
                             <div class="bg-blue-50 rounded-lg p-3 flex items-center">
                                 <input type="checkbox" id="jsClickMore" checked class="w-4 h-4 text-blue-600 rounded">
-                                <label for="jsClickMore" class="ml-2 text-sm text-gray-700">Click "Show More"</label>
+                                <label for="jsClickMore" class="ml-2 text-sm text-gray-700">Нажимать "Еще"</label>
                             </div>
                         </div>
                     </div>
                     
                     <!-- HTTrack specific options -->
                     <div id="httrackOptions" class="hidden mt-3 pt-3 border-t border-gray-200">
-                        <div class="text-xs text-orange-600 mb-2">HTTrack - Smart website copier</div>
+                        <div class="text-xs text-orange-600 mb-2">HTTrack - Умный копировщик сайтов</div>
                         <div class="grid grid-cols-2 gap-3">
                             <div class="bg-orange-50 rounded-lg p-3 flex items-center">
                                 <input type="checkbox" id="httrackContinue" class="w-4 h-4 text-orange-600 rounded">
-                                <label for="httrackContinue" class="ml-2 text-sm text-gray-700">Continue interrupted</label>
+                                <label for="httrackContinue" class="ml-2 text-sm text-gray-700">Продолжить прерванное</label>
                             </div>
                             <div class="bg-orange-50 rounded-lg p-3 flex items-center">
                                 <input type="checkbox" id="httrackExternal" class="w-4 h-4 text-orange-600 rounded">
-                                <label for="httrackExternal" class="ml-2 text-sm text-gray-700">Follow external links</label>
+                                <label for="httrackExternal" class="ml-2 text-sm text-gray-700">Следовать внешним ссылкам</label>
                             </div>
                         </div>
                     </div>
@@ -335,7 +335,7 @@
                 <button type="submit" 
                         class="w-full gradient-bg text-white py-3 px-6 rounded-lg font-semibold hover:opacity-90 transition-opacity flex items-center justify-center">
                     <i class="fas fa-rocket mr-2"></i>
-                    Start Cloning
+                    Начать клонирование
                 </button>
             </form>
         </div>
@@ -344,7 +344,7 @@
         <div id="activeDownloadsSection" class="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl card-shadow p-6 mb-8 hidden">
             <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
                 <i class="fas fa-download text-white mr-2 pulse"></i>
-                Active Downloads
+                Активные загрузки
                 <span id="activeCount" class="ml-2 px-2 py-0.5 bg-white/20 rounded-full text-sm">(0)</span>
             </h2>
             
@@ -356,14 +356,14 @@
         <div class="bg-white rounded-xl card-shadow p-6 mb-8">
             <h2 class="text-xl font-semibold text-gray-800 mb-4">
                 <i class="fas fa-tasks text-purple-600 mr-2"></i>
-                Jobs History
+                История задач
                 <span id="jobCount" class="text-sm font-normal text-gray-500 ml-2">(0)</span>
             </h2>
             
             <div id="jobsList" class="space-y-4">
                 <div class="text-center text-gray-500 py-8">
                     <i class="fas fa-inbox text-4xl mb-3"></i>
-                    <p>No jobs yet. Start cloning a website!</p>
+                    <p>Задач пока нет. Начните клонирование сайта!</p>
                 </div>
             </div>
         </div>
@@ -372,7 +372,7 @@
         <div class="bg-white rounded-xl card-shadow p-6">
             <h2 class="text-xl font-semibold text-gray-800 mb-4">
                 <i class="fas fa-folder text-purple-600 mr-2"></i>
-                Downloaded Sites
+                Загруженные сайты
                 <span id="downloadsCount" class="text-sm font-normal text-gray-500 ml-2">(0)</span>
                 <button onclick="loadDownloads()" class="ml-2 text-sm text-purple-600 hover:text-purple-800">
                     <i class="fas fa-sync-alt"></i>
@@ -382,7 +382,7 @@
             <div id="downloadsList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div class="text-center text-gray-500 py-8 col-span-full">
                     <i class="fas fa-spinner fa-spin text-2xl mb-3"></i>
-                    <p>Loading...</p>
+                    <p>Загрузка...</p>
                 </div>
             </div>
         </div>
@@ -394,7 +394,7 @@
             <div class="flex items-center justify-between p-4 border-b">
                 <div class="flex items-center space-x-3">
                     <i class="fas fa-globe text-purple-600"></i>
-                    <span id="viewerTitle" class="font-semibold text-gray-800">Site Viewer</span>
+                    <span id="viewerTitle" class="font-semibold text-gray-800">Просмотр сайта</span>
                 </div>
                 <div class="flex items-center space-x-2">
                     <button onclick="viewerBack()" class="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200">
@@ -433,7 +433,7 @@
                     <div class="flex items-center space-x-4 mt-2 text-sm text-gray-500">
                         <span class="job-id"></span>
                         <span class="job-engine hidden px-1.5 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">wget2</span>
-                        <span class="job-files"><i class="fas fa-file mr-1"></i><span class="count">0</span> files</span>
+                        <span class="job-files"><i class="fas fa-file mr-1"></i><span class="count">0</span> файлов</span>
                         <span class="job-size"><i class="fas fa-database mr-1"></i><span class="size">0 B</span></span>
                         <span class="job-time"><i class="fas fa-clock mr-1"></i><span class="time">--</span></span>
                     </div>
@@ -443,7 +443,7 @@
                     </div>
                 </div>
                 <div class="flex items-center space-x-2">
-                    <button class="btn-folder px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 text-sm" title="Open folder">
+                    <button class="btn-folder px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 text-sm" title="Открыть папку">
                         <i class="fas fa-folder-open"></i>
                     </button>
                     <button class="btn-open hidden px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 text-sm">
@@ -490,7 +490,7 @@
             <!-- Files List -->
             <div class="job-files-list hidden mt-3">
                 <div class="bg-gray-50 rounded-lg p-3 max-h-48 overflow-y-auto">
-                    <div class="text-xs text-gray-600 font-medium mb-2">Downloaded files:</div>
+                    <div class="text-xs text-gray-600 font-medium mb-2">Загруженные файлы:</div>
                     <div class="files-content grid grid-cols-1 md:grid-cols-2 gap-1 text-xs"></div>
                 </div>
             </div>
@@ -538,6 +538,155 @@
                 console.error('Failed to load jobs:', error);
             }
         }
+        
+        // ===== AUTO-SAVE SETTINGS =====
+        const SETTINGS_KEY = 'wclonerSettings';
+        
+        // List of all settings fields
+        const settingsFields = [
+            { id: 'recursive', type: 'checkbox' },
+            { id: 'depth', type: 'number' },
+            { id: 'pageRequisites', type: 'checkbox' },
+            { id: 'convertLinks', type: 'checkbox' },
+            { id: 'spanHosts', type: 'checkbox' },
+            { id: 'includeSubdomains', type: 'checkbox' },
+            { id: 'extraDomains', type: 'text' },
+            { id: 'noParent', type: 'checkbox' },
+            { id: 'rateLimit', type: 'select' },
+            { id: 'wait', type: 'number' },
+            { id: 'randomWait', type: 'checkbox' },
+            { id: 'userAgent', type: 'select' },
+            { id: 'reject', type: 'text' },
+            { id: 'ignoreRobots', type: 'checkbox' },
+            { id: 'noCookies', type: 'checkbox' },
+            { id: 'mirrorMode', type: 'checkbox' },
+            { id: 'restrictFileNames', type: 'checkbox' },
+            { id: 'trustServerNames', type: 'checkbox' },
+            { id: 'selectedEngine', type: 'hidden' },
+            { id: 'parallelThreads', type: 'number' },
+            { id: 'chunkSize', type: 'select' },
+            { id: 'http2Window', type: 'number' },
+            { id: 'progressBar', type: 'checkbox' },
+            { id: 'metalink', type: 'checkbox' },
+            { id: 'maxPages', type: 'number' },
+            { id: 'jsWait', type: 'number' },
+            { id: 'jsScroll', type: 'checkbox' },
+            { id: 'jsClickMore', type: 'checkbox' },
+            { id: 'httrackContinue', type: 'checkbox' },
+            { id: 'httrackExternal', type: 'checkbox' }
+        ];
+        
+        // Save settings to localStorage
+        function saveSettings() {
+            const settings = {};
+            settingsFields.forEach(field => {
+                const el = document.getElementById(field.id);
+                if (!el) return;
+                if (field.type === 'checkbox') {
+                    settings[field.id] = el.checked;
+                } else {
+                    settings[field.id] = el.value;
+                }
+            });
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+            showSaveIndicator();
+            console.log('[Settings] Saved:', settings);
+        }
+        
+        // Load settings from localStorage
+        function loadSettings() {
+            const saved = localStorage.getItem(SETTINGS_KEY);
+            if (!saved) {
+                console.log('[Settings] No saved settings found');
+                return false;
+            }
+            try {
+                const settings = JSON.parse(saved);
+                settingsFields.forEach(field => {
+                    const el = document.getElementById(field.id);
+                    if (!el || settings[field.id] === undefined) return;
+                    if (field.type === 'checkbox') {
+                        el.checked = settings[field.id];
+                    } else {
+                        el.value = settings[field.id];
+                    }
+                });
+                // Update engine UI
+                if (settings.selectedEngine) {
+                    selectEngine(settings.selectedEngine);
+                }
+                console.log('[Settings] Loaded:', settings);
+                verifySavedSettings(settings);
+                return true;
+            } catch (e) {
+                console.error('[Settings] Failed to load:', e);
+                return false;
+            }
+        }
+        
+        // Verify settings were saved correctly
+        function verifySavedSettings(expectedSettings) {
+            let allMatch = true;
+            settingsFields.forEach(field => {
+                const el = document.getElementById(field.id);
+                if (!el || expectedSettings[field.id] === undefined) return;
+                let currentValue;
+                if (field.type === 'checkbox') {
+                    currentValue = el.checked;
+                } else {
+                    currentValue = el.value;
+                }
+                if (currentValue !== expectedSettings[field.id]) {
+                    console.warn(`[Settings] Mismatch for ${field.id}: expected ${expectedSettings[field.id]}, got ${currentValue}`);
+                    allMatch = false;
+                }
+            });
+            if (allMatch) {
+                console.log('[Settings] Verification passed - all settings match');
+            }
+            return allMatch;
+        }
+        
+        // Show save indicator
+        function showSaveIndicator() {
+            let indicator = document.getElementById('saveIndicator');
+            if (!indicator) {
+                indicator = document.createElement('div');
+                indicator.id = 'saveIndicator';
+                indicator.className = 'fixed bottom-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition-opacity duration-300 flex items-center space-x-2';
+                indicator.innerHTML = '<i class="fas fa-check"></i><span>Настройки сохранены</span>';
+                document.body.appendChild(indicator);
+            }
+            indicator.style.opacity = '1';
+            setTimeout(() => {
+                indicator.style.opacity = '0';
+            }, 1500);
+        }
+        
+        // Attach auto-save listeners to all settings fields
+        function attachAutoSaveListeners() {
+            settingsFields.forEach(field => {
+                const el = document.getElementById(field.id);
+                if (!el) return;
+                const eventType = (field.type === 'checkbox') ? 'change' : 'input';
+                el.addEventListener(eventType, () => {
+                    saveSettings();
+                });
+                // Also listen for change on selects
+                if (field.type === 'select') {
+                    el.addEventListener('change', () => {
+                        saveSettings();
+                    });
+                }
+            });
+            console.log('[Settings] Auto-save listeners attached');
+        }
+        
+        // Initialize settings on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSettings();
+            attachAutoSaveListeners();
+        });
         
         // Toggle advanced options
         document.getElementById('toggleOptions').addEventListener('click', () => {
@@ -592,6 +741,11 @@
             
             const engine = document.getElementById('selectedEngine').value;
             const useWget2 = engine === 'wget2';
+            
+            // Debug: log options before sending
+            console.log('[DEBUG] Sending options:', options);
+            console.log('[DEBUG] extra_domains:', options.extra_domains);
+            console.log('[DEBUG] include_subdomains:', options.include_subdomains);
             
             try {
                 const response = await fetch('/api/jobs', {
@@ -860,7 +1014,7 @@
                 const filesContent = card.querySelector('.files-content');
                 
                 if (files.length === 0) {
-                    filesContent.innerHTML = '<span class="text-gray-400">No files yet...</span>';
+                    filesContent.innerHTML = '<span class="text-gray-400">Файлов пока нет...</span>';
                     return;
                 }
                 
@@ -873,7 +1027,7 @@
                 `).join('');
                 
                 if (files.length > 50) {
-                    filesContent.innerHTML += `<div class="text-gray-400 mt-1">... and ${files.length - 50} more files</div>`;
+                    filesContent.innerHTML += `<div class="text-gray-400 mt-1">... и еще ${files.length - 50} файлов</div>`;
                 }
             } catch (error) {
                 console.error('Failed to load files:', error);
@@ -936,6 +1090,11 @@
                 document.getElementById('httrackOptions').classList.remove('hidden');
                 document.getElementById('descHttrack').classList.remove('hidden');
             }
+            
+            // Auto-save when engine changes
+            if (typeof saveSettings === 'function') {
+                saveSettings();
+            }
         }
         
         // Check engines availability
@@ -983,7 +1142,7 @@
                                     ${d.name}${statusBadge}
                                 </h3>
                                 <div class="text-sm text-gray-500 mt-1">
-                                    <span><i class="fas fa-file mr-1"></i>${d.files} files</span>
+                                    <span><i class="fas fa-file mr-1"></i>${d.files} файлов</span>
                                     <span class="ml-3"><i class="fas fa-database mr-1"></i>${d.size}</span>
                                 </div>
                                 <div class="text-xs text-gray-400 mt-1">
@@ -992,24 +1151,24 @@
                             </div>
                         </div>
                         <div class="flex items-center space-x-2 mt-3">
-                            <button onclick="openDownloadFolder('${d.path}')" class="px-2 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 text-sm" title="Open folder">
+                            <button onclick="openDownloadFolder('${d.path}')" class="px-2 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 text-sm" title="Открыть папку">
                                 <i class="fas fa-folder-open"></i>
                             </button>
-                            <button onclick="openViewer('${d.name}')" class="px-2 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 text-sm" title="View site">
+                            <button onclick="openViewer('${d.name}')" class="px-2 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 text-sm" title="Просмотр сайта">
                                 <i class="fas fa-eye"></i>
                             </button>
-                            <button onclick="openDownloadInBrowser('${d.path}')" class="px-2 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm" title="Open in browser">
+                            <button onclick="openDownloadInBrowser('${d.path}')" class="px-2 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm" title="Открыть в браузере">
                                 <i class="fas fa-external-link-alt"></i>
                             </button>
                             ${!isActive ? `
-                            <button onclick="continueDownload('${d.name}')" class="px-2 py-1.5 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 text-sm" title="Continue download">
+                            <button onclick="continueDownload('${d.name}')" class="px-2 py-1.5 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 text-sm" title="Продолжить загрузку">
                                 <i class="fas fa-play"></i>
                             </button>
-                            <button onclick="restartDownload('${d.name}')" class="px-2 py-1.5 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 text-sm" title="Restart from scratch">
+                            <button onclick="restartDownload('${d.name}')" class="px-2 py-1.5 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 text-sm" title="Перезапустить с нуля">
                                 <i class="fas fa-redo"></i>
                             </button>
                             ` : ''}
-                            <button onclick="deleteDownload('${d.name}')" class="px-2 py-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm" title="Delete">
+                            <button onclick="deleteDownload('${d.name}')" class="px-2 py-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm" title="Удалить">
                                 <i class="fas fa-trash"></i>
                             </button>
                         </div>
@@ -1149,29 +1308,46 @@
                 const isPaused = job.status === 'paused';
                 const statusIcon = isPaused ? 'fa-pause' : 'fa-spinner fa-spin';
                 const pauseBtn = isPaused 
-                    ? `<button onclick="resumeJob('${job.id}')" class="px-2 py-1 bg-green-500/80 text-white rounded hover:bg-green-600 text-sm" title="Resume"><i class="fas fa-play"></i></button>`
-                    : `<button onclick="pauseJob('${job.id}')" class="px-2 py-1 bg-blue-500/80 text-white rounded hover:bg-blue-600 text-sm" title="Pause"><i class="fas fa-pause"></i></button>`;
+                    ? `<button onclick="resumeJob('${job.id}')" class="px-2 py-1 bg-green-500/80 text-white rounded hover:bg-green-600 text-sm" title="Продолжить"><i class="fas fa-play"></i></button>`
+                    : `<button onclick="pauseJob('${job.id}')" class="px-2 py-1 bg-blue-500/80 text-white rounded hover:bg-blue-600 text-sm" title="Пауза"><i class="fas fa-pause"></i></button>`;
+                
+                // Build settings summary
+                const opts = job.options || {};
+                const settingsList = [];
+                if (opts.recursive) settingsList.push(`Глубина: ${opts.depth || 2}`);
+                if (opts.include_subdomains) settingsList.push('Поддомены');
+                if (opts.extra_domains) settingsList.push(`Домены: ${opts.extra_domains}`);
+                if (opts.span_hosts) settingsList.push('Другие хосты');
+                if (opts.mirror_mode) settingsList.push('Зеркало');
+                if (opts.ignore_robots) settingsList.push('Без robots.txt');
+                if (opts.rate_limit) settingsList.push(`Лимит: ${opts.rate_limit}`);
+                if (opts.parallel_threads && opts.parallel_threads !== 10) settingsList.push(`Потоков: ${opts.parallel_threads}`);
+                const settingsSummary = settingsList.length > 0 ? settingsList.join(' | ') : 'Стандартные настройки';
+                
                 return `
                 <div class="bg-white/10 backdrop-blur rounded-lg p-4" data-active-job="${job.id}">
                     <div class="flex items-center justify-between mb-2">
                         <div class="flex items-center space-x-3">
                             <i class="fas ${statusIcon} text-white"></i>
                             <span class="text-white font-medium truncate max-w-md">${job.url}</span>
-                            ${isPaused ? '<span class="px-2 py-0.5 bg-blue-500/50 text-white text-xs rounded">PAUSED</span>' : ''}
+                            ${isPaused ? '<span class="px-2 py-0.5 bg-blue-500/50 text-white text-xs rounded">ПАУЗА</span>' : ''}
                         </div>
                         <div class="flex items-center space-x-2">
-                            <span class="text-white/80 text-sm">${job.files_downloaded} files</span>
+                            <span class="text-white/80 text-sm">${job.files_downloaded} файлов</span>
                             <span class="text-white/80 text-sm">${job.total_size}</span>
                             ${pauseBtn}
-                            <button onclick="stopJob('${job.id}')" class="px-2 py-1 bg-red-500/80 text-white rounded hover:bg-red-600 text-sm" title="Stop">
+                            <button onclick="stopJob('${job.id}')" class="px-2 py-1 bg-red-500/80 text-white rounded hover:bg-red-600 text-sm" title="Стоп">
                                 <i class="fas fa-stop"></i>
                             </button>
                         </div>
                     </div>
+                    <div class="mb-2 text-white/70 text-xs bg-white/5 rounded px-2 py-1">
+                        <i class="fas fa-cog mr-1"></i>${settingsSummary}
+                    </div>
                     <div class="w-full bg-white/20 rounded-full h-2">
                         <div class="bg-white h-2 rounded-full transition-all duration-300" style="width: ${Math.min(job.files_downloaded * 2, 100)}%"></div>
                     </div>
-                    <div class="mt-2 text-white/60 text-xs truncate">${job.output_lines.slice(-1)[0] || 'Starting...'}</div>
+                    <div class="mt-2 text-white/60 text-xs truncate">${job.output_lines.slice(-1)[0] || 'Запуск...'}</div>
                 </div>
             `}).join('');
         }
@@ -1201,6 +1377,10 @@
         
         // Preset functions
         function applyPreset(preset) {
+            // Save user-entered values that should persist across presets
+            const savedExtraDomains = document.getElementById('extraDomains').value;
+            const savedReject = document.getElementById('reject').value;
+            
             // Reset all to defaults first
             document.getElementById('recursive').checked = true;
             document.getElementById('depth').value = 2;
@@ -1212,14 +1392,14 @@
             document.getElementById('wait').value = 0.5;
             document.getElementById('randomWait').checked = false;
             document.getElementById('userAgent').value = '';
-            document.getElementById('reject').value = '';
+            document.getElementById('reject').value = savedReject;
             document.getElementById('ignoreRobots').checked = false;
             document.getElementById('noCookies').checked = false;
             document.getElementById('mirrorMode').checked = false;
             document.getElementById('restrictFileNames').checked = true;
             document.getElementById('trustServerNames').checked = true;
             document.getElementById('includeSubdomains').checked = false;
-            document.getElementById('extraDomains').value = '';
+            document.getElementById('extraDomains').value = savedExtraDomains;
             document.getElementById('useWget2').checked = false;
             document.getElementById('wgetVersionLabel').textContent = 'wget';
             document.getElementById('wget2Badge').classList.add('hidden');
