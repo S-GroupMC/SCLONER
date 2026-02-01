@@ -70,8 +70,17 @@
                             <i class="fas fa-globe"></i>
                         </span>
                         <input type="text" id="urlInput" 
-                               class="flex-1 rounded-none rounded-r-lg border border-gray-300 px-4 py-3 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                               class="flex-1 border border-gray-300 px-4 py-3 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                                placeholder="https://example.com">
+                        <button type="button" onclick="scanSite()" id="scanBtn"
+                                class="px-4 py-3 bg-indigo-600 text-white hover:bg-indigo-700 rounded-r-lg transition-colors"
+                                title="Сканировать поддомены">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                    <div id="selectedDomainsInfo" class="hidden mt-2 text-sm text-indigo-600">
+                        <i class="fas fa-check-circle mr-1"></i>
+                        <span id="selectedDomainsText"></span>
                     </div>
                 </div>
 
@@ -360,8 +369,8 @@
                 <span id="jobCount" class="text-sm font-normal text-gray-500 ml-2">(0)</span>
             </h2>
             
-            <div id="jobsList" class="space-y-4">
-                <div class="text-center text-gray-500 py-8">
+            <div id="jobsList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="text-center text-gray-500 py-8 col-span-full">
                     <i class="fas fa-inbox text-4xl mb-3"></i>
                     <p>Задач пока нет. Начните клонирование сайта!</p>
                 </div>
@@ -387,6 +396,65 @@
             </div>
         </div>
     </main>
+
+    <!-- Subdomain Scanner Modal -->
+    <div id="scanModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col m-4">
+            <div class="flex items-center justify-between p-4 border-b">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-sitemap text-indigo-600"></i>
+                    <span class="font-semibold text-gray-800">Карта поддоменов</span>
+                </div>
+                <button onclick="closeScanModal()" class="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="scanLoading" class="p-8 text-center">
+                <i class="fas fa-spinner fa-spin text-4xl text-indigo-600 mb-4"></i>
+                <p class="text-gray-600">Сканирование сайта...</p>
+                <p class="text-sm text-gray-400 mt-2">Поиск поддоменов и ссылок</p>
+            </div>
+            <div id="scanResults" class="hidden flex-1 overflow-y-auto p-4">
+                <div class="mb-4 p-3 bg-indigo-50 rounded-lg">
+                    <div class="text-sm text-indigo-700">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        Просканировано страниц: <span id="scanPagesCount">0</span>
+                    </div>
+                    <div class="text-xs text-indigo-600 mt-1">
+                        Базовый домен: <strong id="scanBaseDomain"></strong>
+                    </div>
+                </div>
+                <div class="mb-3 flex items-center justify-between">
+                    <span class="text-sm font-medium text-gray-700">Найденные поддомены:</span>
+                    <div class="space-x-2">
+                        <button onclick="selectAllDomains()" class="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200">
+                            Выбрать все
+                        </button>
+                        <button onclick="selectMainOnly()" class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+                            Только основной
+                        </button>
+                    </div>
+                </div>
+                <div id="subdomainsList" class="space-y-2">
+                </div>
+            </div>
+            <div id="scanFooter" class="hidden p-4 border-t bg-gray-50 rounded-b-xl">
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-gray-600">
+                        Выбрано: <strong id="selectedCount">0</strong> доменов
+                    </span>
+                    <div class="space-x-2">
+                        <button onclick="closeScanModal()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+                            Отмена
+                        </button>
+                        <button onclick="applySelectedDomains()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                            <i class="fas fa-check mr-1"></i>Применить
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- HTML Viewer Modal -->
     <div id="viewerModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center">
@@ -423,74 +491,79 @@
 
     <!-- Job Template -->
     <template id="jobTemplate">
-        <div class="job-card border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-            <div class="flex items-start justify-between">
-                <div class="flex-1">
-                    <div class="flex items-center space-x-2">
-                        <span class="job-status-icon"></span>
-                        <a href="#" class="job-url text-purple-600 hover:text-purple-800 font-medium truncate max-w-md" target="_blank"></a>
-                    </div>
-                    <div class="flex items-center space-x-4 mt-2 text-sm text-gray-500">
-                        <span class="job-id"></span>
-                        <span class="job-engine hidden px-1.5 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">wget2</span>
-                        <span class="job-files"><i class="fas fa-file mr-1"></i><span class="count">0</span> файлов</span>
-                        <span class="job-size"><i class="fas fa-database mr-1"></i><span class="size">0 B</span></span>
-                        <span class="job-time"><i class="fas fa-clock mr-1"></i><span class="time">--</span></span>
-                    </div>
-                    <div class="job-path mt-1 text-xs text-gray-400 truncate max-w-lg">
-                        <i class="fas fa-folder-open mr-1"></i>
-                        <span class="path"></span>
-                    </div>
-                </div>
-                <div class="flex items-center space-x-2">
-                    <button class="btn-folder px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 text-sm" title="Открыть папку">
-                        <i class="fas fa-folder-open"></i>
-                    </button>
-                    <button class="btn-open hidden px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 text-sm">
-                        <i class="fas fa-external-link-alt mr-1"></i> Open
-                    </button>
-                    <button class="btn-download hidden px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm">
-                        <i class="fas fa-download mr-1"></i> Download
-                    </button>
-                    <button class="btn-pause hidden px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm">
-                        <i class="fas fa-pause mr-1"></i> Pause
-                    </button>
-                    <button class="btn-resume hidden px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 text-sm">
-                        <i class="fas fa-play mr-1"></i> Resume
-                    </button>
-                    <button class="btn-stop hidden px-3 py-1 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 text-sm">
-                        <i class="fas fa-stop mr-1"></i> Stop
-                    </button>
-                    <button class="btn-restart hidden px-3 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 text-sm">
-                        <i class="fas fa-redo mr-1"></i> Restart
-                    </button>
-                    <button class="btn-delete px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm">
-                        <i class="fas fa-trash mr-1"></i>
-                    </button>
-                    <button class="btn-toggle-log px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm">
-                        <i class="fas fa-terminal mr-1"></i> Log
-                    </button>
-                </div>
+        <div class="job-card border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow flex flex-col">
+            <!-- Header with status and URL -->
+            <div class="flex items-center space-x-2 mb-2">
+                <span class="job-status-icon"></span>
+                <a href="#" class="job-url text-purple-600 hover:text-purple-800 font-medium text-sm truncate" target="_blank"></a>
+            </div>
+            
+            <!-- Stats -->
+            <div class="flex flex-wrap gap-2 text-xs text-gray-500 mb-2">
+                <span class="job-id text-gray-400"></span>
+                <span class="job-engine hidden px-1 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">wget2</span>
+            </div>
+            <div class="flex flex-wrap gap-3 text-xs text-gray-500 mb-2">
+                <span class="job-files"><i class="fas fa-file mr-1"></i><span class="count">0</span></span>
+                <span class="job-size"><i class="fas fa-database mr-1"></i><span class="size">0 B</span></span>
+                <span class="job-time"><i class="fas fa-clock mr-1"></i><span class="time">--</span></span>
+            </div>
+            
+            <!-- Path -->
+            <div class="job-path text-xs text-gray-400 truncate mb-3" title="">
+                <i class="fas fa-folder-open mr-1"></i>
+                <span class="path"></span>
+            </div>
+            
+            <!-- Buttons - 4 in row -->
+            <div class="grid grid-cols-4 gap-1 mt-auto">
+                <button class="btn-folder p-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 text-xs" title="Папка">
+                    <i class="fas fa-folder-open"></i>
+                </button>
+                <button class="btn-open hidden p-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 text-xs" title="Открыть">
+                    <i class="fas fa-external-link-alt"></i>
+                </button>
+                <button class="btn-download hidden p-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-xs" title="Скачать">
+                    <i class="fas fa-download"></i>
+                </button>
+                <button class="btn-restart hidden p-1.5 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 text-xs" title="Рестарт">
+                    <i class="fas fa-redo"></i>
+                </button>
+                <button class="btn-delete p-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 text-xs" title="Удалить">
+                    <i class="fas fa-trash"></i>
+                </button>
+                <button class="btn-toggle-log p-1.5 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-xs" title="Лог">
+                    <i class="fas fa-terminal"></i>
+                </button>
+                <button class="btn-pause hidden p-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-xs" title="Пауза">
+                    <i class="fas fa-pause"></i>
+                </button>
+                <button class="btn-resume hidden p-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 text-xs" title="Продолжить">
+                    <i class="fas fa-play"></i>
+                </button>
+                <button class="btn-stop hidden p-1.5 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 text-xs" title="Стоп">
+                    <i class="fas fa-stop"></i>
+                </button>
             </div>
             
             <!-- Progress Bar -->
-            <div class="job-progress mt-3 hidden">
-                <div class="w-full bg-gray-200 rounded-full h-2">
-                    <div class="progress-bar bg-purple-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+            <div class="job-progress mt-2 hidden">
+                <div class="w-full bg-gray-200 rounded-full h-1.5">
+                    <div class="progress-bar bg-purple-600 h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
                 </div>
             </div>
             
             <!-- Log Output -->
-            <div class="job-log hidden mt-3">
-                <div class="log-container bg-gray-900 text-green-400 p-3 rounded-lg max-h-48 overflow-y-auto">
+            <div class="job-log hidden mt-2">
+                <div class="log-container bg-gray-900 text-green-400 p-2 rounded-lg max-h-32 overflow-y-auto text-xs">
                     <pre class="log-content whitespace-pre-wrap"></pre>
                 </div>
             </div>
             
             <!-- Files List -->
-            <div class="job-files-list hidden mt-3">
-                <div class="bg-gray-50 rounded-lg p-3 max-h-48 overflow-y-auto">
-                    <div class="text-xs text-gray-600 font-medium mb-2">Загруженные файлы:</div>
+            <div class="job-files-list hidden mt-2">
+                <div class="bg-gray-50 rounded-lg p-2 max-h-32 overflow-y-auto">
+                    <div class="text-xs text-gray-600 font-medium mb-1">Файлы:</div>
                     <div class="files-content grid grid-cols-1 md:grid-cols-2 gap-1 text-xs"></div>
                 </div>
             </div>
@@ -697,10 +770,32 @@
             chevron.classList.toggle('fa-chevron-up');
         });
         
-        // Form submit
+        // Flag to track if we should start cloning after scan
+        let startCloningAfterScan = false;
+        
+        // Form submit - first scan subdomains, then clone
         document.getElementById('newJobForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
+            const url = document.getElementById('urlInput').value.trim();
+            if (!url) return;
+            
+            // Check if subdomains option is enabled - if so, scan first
+            const includeSubdomains = document.getElementById('includeSubdomains').checked;
+            const extraDomains = document.getElementById('extraDomains').value.trim();
+            
+            // If subdomains enabled and no extra domains selected yet, scan first
+            if (includeSubdomains && !extraDomains) {
+                startCloningAfterScan = true;
+                scanSite();
+                return;
+            }
+            
+            // Otherwise start cloning directly
+            await startCloning();
+        });
+        
+        async function startCloning() {
             const url = document.getElementById('urlInput').value.trim();
             if (!url) return;
             
@@ -768,13 +863,14 @@
                 jobs.set(data.id, data);
                 updateJobUI(data);
                 updateJobCount();
+                updateActiveDownloads();
                 
                 document.getElementById('urlInput').value = '';
             } catch (error) {
                 console.error('Failed to create job:', error);
                 alert('Ошибка создания задачи');
             }
-        });
+        }
         
         function updateJobUI(job) {
             let card = document.querySelector(`[data-job-id="${job.id}"]`);
@@ -927,45 +1023,90 @@
             }
         }
         
-        async function stopJob(jobId) {
+        window.stopJob = async function(jobId) {
+            console.log('stopJob called:', jobId);
             try {
-                await fetch(`/api/jobs/${jobId}/stop`, { method: 'POST' });
+                const response = await fetch(`/api/jobs/${jobId}/stop`, { method: 'POST' });
+                console.log('stopJob response:', response.status);
+                if (response.ok) {
+                    const job = await response.json();
+                    jobs.set(job.id, job);
+                    updateJobUI(job);
+                    updateActiveDownloads();
+                }
             } catch (error) {
                 console.error('Failed to stop job:', error);
             }
         }
         
-        async function pauseJob(jobId) {
+        window.pauseJob = async function(jobId) {
+            console.log('pauseJob called:', jobId);
             try {
                 const response = await fetch(`/api/jobs/${jobId}/pause`, { method: 'POST' });
-                if (!response.ok) {
-                    const data = await response.json();
-                    console.error('Pause failed:', data.error);
+                console.log('pauseJob response:', response.status);
+                if (response.ok) {
+                    const job = await response.json();
+                    jobs.set(job.id, job);
+                    updateJobUI(job);
+                    updateActiveDownloads();
                 }
             } catch (error) {
                 console.error('Failed to pause job:', error);
             }
         }
         
-        async function resumeJob(jobId) {
+        window.resumeJob = async function(jobId) {
+            console.log('resumeJob called:', jobId);
             try {
-                await fetch(`/api/jobs/${jobId}/resume`, { method: 'POST' });
+                const response = await fetch(`/api/jobs/${jobId}/resume`, { method: 'POST' });
+                console.log('resumeJob response:', response.status);
+                if (response.ok) {
+                    const job = await response.json();
+                    jobs.set(job.id, job);
+                    updateJobUI(job);
+                    updateActiveDownloads();
+                }
             } catch (error) {
                 console.error('Failed to resume job:', error);
             }
         }
         
         async function restartJob(jobId) {
+            const job = jobs.get(jobId);
+            if (!job) return;
+            
+            // Ask user if they want to scan subdomains first
+            const scanFirst = confirm('Просканировать поддомены перед перезапуском?\n\nОК - Сканировать и выбрать поддомены\nОтмена - Перезапустить сразу');
+            
+            if (scanFirst) {
+                // Set URL and trigger scan
+                document.getElementById('urlInput').value = job.url;
+                restartAfterScan = jobId;  // Store job ID to restart after scan
+                scanSite();
+                return;
+            }
+            
+            // Direct restart without scan
+            await doRestartJob(jobId);
+        }
+        
+        let restartAfterScan = null;  // Job ID to restart after scan modal closes
+        
+        async function doRestartJob(jobId, extraDomains = null) {
             // Get currently selected engine from UI
             const engine = document.getElementById('selectedEngine').value;
             const useWget2 = engine === 'wget2' || engine === 'smart';
             
-            if (!confirm(`Перезапустить задачу? Режим: ${engine.toUpperCase()}. Текущие файлы будут сохранены.`)) return;
+            const body = { engine: engine, use_wget2: useWget2 };
+            if (extraDomains) {
+                body.extra_domains = extraDomains;
+            }
+            
             try {
                 const response = await fetch(`/api/jobs/${jobId}/restart`, { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ engine: engine, use_wget2: useWget2 })
+                    body: JSON.stringify(body)
                 });
                 if (response.ok) {
                     const job = await response.json();
@@ -1202,14 +1343,19 @@
         }
         
         async function deleteDownload(folderName) {
+            console.log('[Delete] Attempting to delete:', folderName);
             if (!confirm(`Удалить "${folderName}"? Это действие нельзя отменить.`)) {
+                console.log('[Delete] User cancelled');
                 return;
             }
             
             try {
-                const response = await fetch(`/api/downloads/${encodeURIComponent(folderName)}`, {
+                const url = `/api/downloads/${encodeURIComponent(folderName)}`;
+                console.log('[Delete] Sending DELETE to:', url);
+                const response = await fetch(url, {
                     method: 'DELETE'
                 });
+                console.log('[Delete] Response status:', response.status);
                 
                 if (response.ok) {
                     loadDownloads(); // Refresh the list
@@ -1526,6 +1672,182 @@
         document.getElementById('viewerModal').addEventListener('click', (e) => {
             if (e.target.id === 'viewerModal') {
                 closeViewer();
+            }
+        });
+        
+        // ===== SUBDOMAIN SCANNER =====
+        let scannedSubdomains = [];
+        let selectedDomains = new Set();
+        
+        async function scanSite() {
+            const url = document.getElementById('urlInput').value.trim();
+            if (!url) {
+                alert('Введите URL сайта');
+                return;
+            }
+            
+            // Show modal with loading
+            document.getElementById('scanModal').classList.remove('hidden');
+            document.getElementById('scanLoading').classList.remove('hidden');
+            document.getElementById('scanResults').classList.add('hidden');
+            document.getElementById('scanFooter').classList.add('hidden');
+            
+            try {
+                const response = await fetch('/api/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, max_pages: 50 })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Ошибка сканирования');
+                }
+                
+                scannedSubdomains = data.subdomains;
+                selectedDomains = new Set();
+                
+                // Auto-select main domains
+                scannedSubdomains.forEach(s => {
+                    if (s.is_main) {
+                        selectedDomains.add(s.domain);
+                    }
+                });
+                
+                // Update UI
+                document.getElementById('scanPagesCount').textContent = data.pages_scanned;
+                document.getElementById('scanBaseDomain').textContent = data.base_domain;
+                
+                renderSubdomainsList();
+                
+                document.getElementById('scanLoading').classList.add('hidden');
+                document.getElementById('scanResults').classList.remove('hidden');
+                document.getElementById('scanFooter').classList.remove('hidden');
+                
+            } catch (error) {
+                console.error('Scan failed:', error);
+                alert('Ошибка сканирования: ' + error.message);
+                closeScanModal();
+            }
+        }
+        
+        function renderSubdomainsList() {
+            const container = document.getElementById('subdomainsList');
+            container.innerHTML = scannedSubdomains.map(s => {
+                const isSelected = selectedDomains.has(s.domain);
+                const mainBadge = s.is_main ? '<span class="ml-2 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">main</span>' : '';
+                const typeBadge = s.type === 'related' ? '<span class="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded">related</span>' : '';
+                // Show sample URLs if available
+                const sampleUrls = s.sample_urls && s.sample_urls.length > 0 
+                    ? `<div class="mt-2 text-xs text-gray-400 space-y-1">
+                        ${s.sample_urls.map(url => `<div class="truncate"><i class="fas fa-external-link-alt mr-1"></i><a href="${url}" target="_blank" class="hover:text-indigo-500">${url}</a></div>`).join('')}
+                       </div>` 
+                    : '';
+                return `
+                <div class="p-3 rounded-lg border ${isSelected ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 bg-white'} hover:shadow-sm transition-all">
+                    <div class="flex items-center">
+                        <input type="checkbox" 
+                               id="domain_${s.domain.replace(/\./g, '_')}" 
+                               ${isSelected ? 'checked' : ''} 
+                               onchange="toggleDomain('${s.domain}')"
+                               class="w-5 h-5 text-indigo-600 rounded mr-3">
+                        <div class="flex-1">
+                            <div class="flex items-center flex-wrap">
+                                <label for="domain_${s.domain.replace(/\./g, '_')}" class="font-medium text-gray-800 cursor-pointer">${s.domain}</label>
+                                ${mainBadge}${typeBadge}
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                <i class="fas fa-link mr-1"></i>${s.count} links
+                            </div>
+                        </div>
+                    </div>
+                    ${sampleUrls}
+                </div>
+                `;
+            }).join('');
+            
+            updateSelectedCount();
+        }
+        
+        function toggleDomain(domain) {
+            if (selectedDomains.has(domain)) {
+                selectedDomains.delete(domain);
+            } else {
+                selectedDomains.add(domain);
+            }
+            renderSubdomainsList();
+        }
+        
+        function selectAllDomains() {
+            scannedSubdomains.forEach(s => selectedDomains.add(s.domain));
+            renderSubdomainsList();
+        }
+        
+        function selectMainOnly() {
+            selectedDomains.clear();
+            scannedSubdomains.forEach(s => {
+                if (s.is_main) {
+                    selectedDomains.add(s.domain);
+                }
+            });
+            renderSubdomainsList();
+        }
+        
+        function updateSelectedCount() {
+            document.getElementById('selectedCount').textContent = selectedDomains.size;
+        }
+        
+        function applySelectedDomains() {
+            if (selectedDomains.size === 0) {
+                alert('Выберите хотя бы один домен');
+                return;
+            }
+            
+            // Get main domain from scanned data
+            const mainDomains = scannedSubdomains.filter(s => s.is_main).map(s => s.domain);
+            const extraDomains = Array.from(selectedDomains).filter(d => !mainDomains.includes(d));
+            const extraDomainsStr = extraDomains.join(', ');
+            
+            // Check if this is a restart operation
+            if (restartAfterScan) {
+                const jobId = restartAfterScan;
+                restartAfterScan = null;
+                closeScanModal();
+                doRestartJob(jobId, extraDomainsStr);
+                return;
+            }
+            
+            // Set extra domains in the form
+            document.getElementById('extraDomains').value = extraDomainsStr;
+            document.getElementById('includeSubdomains').checked = true;
+            
+            // Show info about selected domains
+            const info = document.getElementById('selectedDomainsInfo');
+            const text = document.getElementById('selectedDomainsText');
+            info.classList.remove('hidden');
+            text.textContent = `Выбрано ${selectedDomains.size} доменов: ${Array.from(selectedDomains).slice(0, 3).join(', ')}${selectedDomains.size > 3 ? '...' : ''}`;
+            
+            // Save settings
+            saveSettings();
+            
+            closeScanModal();
+            
+            // If this was triggered by "Start cloning" button, start cloning now
+            if (startCloningAfterScan) {
+                startCloningAfterScan = false;
+                startCloning();
+            }
+        }
+        
+        function closeScanModal() {
+            document.getElementById('scanModal').classList.add('hidden');
+        }
+        
+        // Close scan modal on backdrop click
+        document.getElementById('scanModal').addEventListener('click', (e) => {
+            if (e.target.id === 'scanModal') {
+                closeScanModal();
             }
         });
     </script>

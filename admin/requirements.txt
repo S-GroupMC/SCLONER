@@ -6,6 +6,8 @@ eventlet>=0.34.2
 gevent>=25.0.0
 bidict>=0.23.0
 simple-websocket>=1.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
 
 # External dependencies (not pip):
 #

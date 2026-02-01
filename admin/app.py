@@ -193,37 +193,72 @@ def build_wget_command(job):
     
     # Collect all domains for -D option
     domains_list = []
+    from urllib.parse import urlparse
+    parsed = urlparse(job.url)
+    main_domain = parsed.netloc
+    if main_domain.startswith('www.'):
+        base_domain = main_domain[4:]
+    else:
+        base_domain = main_domain
     
-    # Include subdomains - extract domain from URL and add wildcard
+    # Always add main domain
+    domains_list.append(base_domain)
+    domains_list.append(f'www.{base_domain}')
+    
+    # Include subdomains - add wildcard pattern
     if opts.get('include_subdomains', False):
-        from urllib.parse import urlparse
-        parsed = urlparse(job.url)
-        domain = parsed.netloc
-        # Remove www. prefix if present
-        if domain.startswith('www.'):
-            domain = domain[4:]
-        # Add base domain and wildcard for subdomains
-        domains_list.append(domain)
-        domains_list.append(f'.{domain}')
-        # Also add www variant
-        domains_list.append(f'www.{domain}')
+        domains_list.append(f'.{base_domain}')
     
     # Additional domains to include
     extra_domains = opts.get('extra_domains', '')
     if extra_domains:
-        # Split by comma and add each domain
         for d in extra_domains.split(','):
             d = d.strip()
             if d:
                 domains_list.append(d)
     
-    # Apply -D option with all collected domains
-    if domains_list:
-        cmd.extend(['-D', ','.join(domains_list)])
+    # CRITICAL: Apply strict domain filtering
+    # -D limits which domains can be downloaded
+    cmd.extend(['-D', ','.join(domains_list)])
     
-    # Span hosts - required for subdomains to work, auto-enable if subdomains requested
-    if opts.get('span_hosts', False) or opts.get('include_subdomains', False):
+    # Span hosts - ONLY enable if we have multiple domains to span
+    # Without -H, wget stays on the original host only
+    if opts.get('include_subdomains', False) or extra_domains:
         cmd.append('-H')
+        # --strict-comments helps avoid following links in comments
+        if not job.use_wget2:
+            cmd.append('--strict-comments')
+    
+    # CRITICAL: Exclude common external domains to prevent recursive crawling
+    # This is needed because -p (page requisites) downloads resources from any domain
+    excluded_domains = [
+        'github.com', 'githubusercontent.com', 'github.io',
+        'facebook.com', 'fbcdn.net', 'facebook.net',
+        'twitter.com', 'twimg.com', 'x.com',
+        'youtube.com', 'youtube-nocookie.com', 'ytimg.com', 'googlevideo.com',
+        'google.com', 'googleapis.com', 'googletagmanager.com', 'google-analytics.com', 'gstatic.com',
+        'cloudflare.com', 'cdnjs.cloudflare.com',
+        'amazon.com', 'amazonaws.com', 'cloudfront.net',
+        'instagram.com', 'cdninstagram.com',
+        'tiktok.com', 'tiktokcdn.com',
+        'linkedin.com', 'licdn.com',
+        'pinterest.com', 'pinimg.com',
+        'apple.com', 'mzstatic.com', 'itunes.apple.com',
+        'spotify.com', 'scdn.co',
+        'vimeo.com', 'vimeocdn.com',
+        'wordpress.com', 'wp.com',
+        'gravatar.com',
+        'disqus.com', 'disquscdn.com',
+        'addthis.com', 'sharethis.com',
+        'doubleclick.net', 'googlesyndication.com',
+        'fontawesome.com', 'bootstrapcdn.com',
+        'jquery.com', 'jsdelivr.net', 'unpkg.com',
+        'typekit.net', 'fonts.googleapis.com', 'fonts.gstatic.com'
+    ]
+    # Filter out any domains that are in our allowed list
+    excluded = [d for d in excluded_domains if d not in domains_list and not any(d.endswith(allowed) for allowed in domains_list)]
+    if excluded:
+        cmd.extend(['--exclude-domains', ','.join(excluded)])
     
     # No parent (don't go up directories)
     if opts.get('no_parent', True):
@@ -327,9 +362,27 @@ def build_httrack_command(job):
     depth = opts.get('depth', 2)
     cmd.extend(['-r' + str(depth)])
     
-    # Include subdomains
+    # Extract domain for filtering
+    parsed = urlparse(job.url)
+    domain = parsed.netloc
+    if domain.startswith('www.'):
+        base_domain = domain[4:]
+    else:
+        base_domain = domain
+    
+    # CRITICAL: Restrict to same domain and subdomains only
+    # +*.domain.com = allow subdomains
+    # -*/ = deny everything else by default
     if opts.get('include_subdomains', False):
-        cmd.append('-%e0')  # Follow external links on same domain
+        cmd.append(f'+*.{base_domain}/*')  # Allow all subdomains
+        cmd.append(f'+{base_domain}/*')     # Allow base domain
+        cmd.append(f'+www.{base_domain}/*') # Allow www
+    else:
+        cmd.append(f'+{domain}/*')  # Only exact domain
+    
+    # Block external domains explicitly
+    if not opts.get('span_hosts', False) and not opts.get('httrack_external', False):
+        cmd.append('-*')  # Deny all other domains
     
     # User agent
     user_agent = opts.get('user_agent', '')
@@ -739,9 +792,15 @@ def restart_job(job_id):
     engine = data.get('engine', old_job.engine)
     use_wget2 = data.get('use_wget2', old_job.use_wget2)
     
+    # Copy options and update extra_domains if provided
+    new_options = old_job.options.copy()
+    if data.get('extra_domains'):
+        new_options['extra_domains'] = data['extra_domains']
+        new_options['include_subdomains'] = True
+    
     # Create new job with selected engine
     new_job_id = str(uuid.uuid4())[:8]
-    new_job = WgetJob(new_job_id, old_job.url, old_job.options.copy(), use_wget2, old_job.folder_name, engine)
+    new_job = WgetJob(new_job_id, old_job.url, new_options, use_wget2, old_job.folder_name, engine)
     new_job.options['continue_download'] = True  # Resume mode
     jobs[new_job_id] = new_job
     
@@ -1018,6 +1077,161 @@ def find_index_html_api(folder_name):
         return jsonify({'path': str(rel_path)})
     
     return jsonify({'error': 'No HTML files found'}), 404
+
+
+@app.route('/api/scan', methods=['POST'])
+def scan_site():
+    """Scan a website to find all subdomains and create a link map"""
+    import requests
+    from bs4 import BeautifulSoup
+    import re
+    
+    data = request.json
+    url = data.get('url', '').strip()
+    max_pages = data.get('max_pages', 50)
+    
+    if not url:
+        return jsonify({'error': 'URL is required'}), 400
+    
+    # Normalize URL
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    
+    parsed = urlparse(url)
+    base_domain = parsed.netloc
+    if base_domain.startswith('www.'):
+        base_domain = base_domain[4:]
+    
+    # Extract root domain (last 2 parts)
+    domain_parts = base_domain.split('.')
+    if len(domain_parts) >= 2:
+        root_domain = '.'.join(domain_parts[-2:])
+    else:
+        root_domain = base_domain
+    
+    # Extract brand name for finding related domains (e.g., "arianagrande" from "arianagrande.com")
+    brand_name = domain_parts[0] if domain_parts else base_domain
+    
+    visited = set()
+    subdomains = {}  # {subdomain: {'count': N, 'sample_urls': []}}
+    related_domains = {}  # Domains containing brand name
+    to_visit = [url]
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    pages_scanned = 0
+    
+    while to_visit and pages_scanned < max_pages:
+        current_url = to_visit.pop(0)
+        if current_url in visited:
+            continue
+        
+        visited.add(current_url)
+        pages_scanned += 1
+        
+        try:
+            response = requests.get(current_url, headers=headers, timeout=20, allow_redirects=True)
+            if response.status_code != 200:
+                continue
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find all links
+            for tag in soup.find_all(['a', 'link', 'script', 'img', 'iframe', 'source']):
+                href = tag.get('href') or tag.get('src')
+                if not href:
+                    continue
+                
+                # Make absolute URL
+                if href.startswith('//'):
+                    href = 'https:' + href
+                elif href.startswith('/'):
+                    href = f"{parsed.scheme}://{parsed.netloc}{href}"
+                elif not href.startswith(('http://', 'https://')):
+                    continue
+                
+                try:
+                    link_parsed = urlparse(href)
+                    link_domain = link_parsed.netloc
+                    if not link_domain:
+                        continue
+                    
+                    # Check if it's a subdomain of root domain OR contains brand name
+                    is_subdomain = link_domain.endswith(root_domain) or link_domain == root_domain
+                    is_related = brand_name.lower() in link_domain.lower() and len(brand_name) >= 4
+                    
+                    if is_subdomain:
+                        if link_domain not in subdomains:
+                            subdomains[link_domain] = {
+                                'count': 0,
+                                'sample_urls': [],
+                                'is_main': link_domain == parsed.netloc or link_domain == base_domain or link_domain == f'www.{base_domain}'
+                            }
+                        subdomains[link_domain]['count'] += 1
+                        if len(subdomains[link_domain]['sample_urls']) < 3:
+                            clean_url = f"{link_parsed.scheme}://{link_parsed.netloc}{link_parsed.path}"
+                            if clean_url not in subdomains[link_domain]['sample_urls']:
+                                subdomains[link_domain]['sample_urls'].append(clean_url)
+                        
+                        # Add to visit queue if same main domain
+                        if link_domain == parsed.netloc and href not in visited:
+                            to_visit.append(href)
+                    
+                    elif is_related:
+                        # Track related domains (contain brand name but different TLD)
+                        if link_domain not in related_domains:
+                            related_domains[link_domain] = {
+                                'count': 0,
+                                'sample_urls': [],
+                                'is_main': False
+                            }
+                        related_domains[link_domain]['count'] += 1
+                        if len(related_domains[link_domain]['sample_urls']) < 3:
+                            clean_url = f"{link_parsed.scheme}://{link_parsed.netloc}{link_parsed.path}"
+                            if clean_url not in related_domains[link_domain]['sample_urls']:
+                                related_domains[link_domain]['sample_urls'].append(clean_url)
+                except:
+                    continue
+                    
+        except Exception as e:
+            print(f"[Scan] Error fetching {current_url}: {e}")
+            continue
+    
+    # Convert to list and sort
+    result = []
+    
+    # Add subdomains (same root domain)
+    for domain, info in subdomains.items():
+        result.append({
+            'domain': domain,
+            'count': info['count'],
+            'sample_urls': info['sample_urls'],
+            'is_main': info['is_main'],
+            'type': 'subdomain'
+        })
+    
+    # Add related domains (contain brand name)
+    for domain, info in related_domains.items():
+        result.append({
+            'domain': domain,
+            'count': info['count'],
+            'sample_urls': info['sample_urls'],
+            'is_main': False,
+            'type': 'related'
+        })
+    
+    # Sort: main first, then by count
+    result.sort(key=lambda x: (-x['is_main'], -x['count']))
+    
+    return jsonify({
+        'base_domain': base_domain,
+        'root_domain': root_domain,
+        'brand_name': brand_name,
+        'pages_scanned': pages_scanned,
+        'subdomains': result
+    })
 
 
 @socketio.on('connect')
