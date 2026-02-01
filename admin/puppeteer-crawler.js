@@ -30,6 +30,27 @@ const visitedUrls = new Set();
 const downloadedAssets = new Set();
 const baseUrl = new URL(config.url);
 
+// Extract base domain for subdomain matching
+function getBaseDomain(hostname) {
+    const parts = hostname.split('.');
+    if (parts.length >= 2) {
+        return parts.slice(-2).join('.');
+    }
+    return hostname;
+}
+const baseDomain = getBaseDomain(baseUrl.hostname);
+
+// Check if URL is allowed (same domain or subdomain)
+function isAllowedDomain(url) {
+    try {
+        const parsed = new URL(url);
+        const urlDomain = getBaseDomain(parsed.hostname);
+        return urlDomain === baseDomain;
+    } catch {
+        return false;
+    }
+}
+
 async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -122,8 +143,8 @@ async function extractLinks(page, currentUrl) {
     
     return links.filter(link => {
         try {
-            const url = new URL(link);
-            return url.hostname === baseUrl.hostname && !visitedUrls.has(link);
+            // Allow same domain and subdomains
+            return isAllowedDomain(link) && !visitedUrls.has(link);
         } catch {
             return false;
         }
