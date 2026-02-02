@@ -23,8 +23,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Configuration
 BASE_DIR = Path(__file__).parent.parent
-WGET_PATH = os.environ.get('WGET_PATH', str(BASE_DIR / 'src' / 'wget'))
-WGET2_PATH = os.environ.get('WGET2_PATH', '/opt/homebrew/bin/wget2')
+WGET2_PATH = os.environ.get('WGET2_PATH', str(BASE_DIR / 'bin' / 'wget2'))
 HTTRACK_PATH = os.environ.get('HTTRACK_PATH', '/opt/homebrew/bin/httrack')
 PUPPETEER_SCRIPT = BASE_DIR / 'admin' / 'puppeteer-crawler.js'
 DOWNLOADS_DIR = BASE_DIR / 'downloads'
@@ -95,6 +94,125 @@ def load_jobs():
         print(f"Error loading jobs: {e}")
 
 
+# =============================================================================
+# DOMAIN FILTERING - Common logic for all engines (wget2, httrack, smart)
+# =============================================================================
+
+# Blocked external domains and patterns
+BLOCKED_DOMAINS = [
+    # Social media
+    'facebook.com', 'twitter.com', 'instagram.com', 'youtube.com',
+    'tiktok.com', 'linkedin.com', 'pinterest.com', 'snapchat.com',
+    'x.com', 'threads.net',
+    # Tracking & Analytics
+    'google-analytics.com', 'googletagmanager.com', 'doubleclick.net',
+    'googlesyndication.com', 'googleadservices.com',
+    'facebook.net', 'fbcdn.net',
+    'hotjar.com', 'mixpanel.com', 'segment.com', 'amplitude.com',
+    'newrelic.com', 'nr-data.net', 'sentry.io',
+    # Advertising
+    'adsrvr.org', 'adroll.com', 'criteo.com', 'taboola.com', 'outbrain.com',
+    # Ticket/Event platforms (external)
+    'ticketmaster.com', 'ticketmaster.net', 'livenation.com',
+    'axs.com', 'eventbrite.com', 'stubhub.com',
+    'seatgeek.com', 'vividseats.com',
+    # Chat/Support widgets
+    'intercom.io', 'zendesk.com', 'drift.com', 'crisp.chat',
+    'tawk.to', 'livechat.com', 'olark.com',
+    'gorgias.io', 'gorgias.help',
+    # Marketing platforms
+    'mailchimp.com', 'klaviyo.com', 'hubspot.com', 'marketo.com',
+    'pardot.com', 'salesforce.com',
+    'attentivemobile.com', 'attn.tv',
+    'hive.co', 'privy.com',
+    # Other external services
+    '9gtb.com', 'trustedsite.com', 'trustpilot.com',
+    'yotpo.com', 'stamped.io', 'loox.io',
+    'rechargeapps.com', 'recurly.com',
+]
+
+# Allowed CDN patterns (resources needed for page display)
+ALLOWED_CDN_PATTERNS = [
+    'cdn.shopify.com', 'fonts.shopifycdn.com',
+    'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'unpkg.com',
+    'fonts.googleapis.com', 'fonts.gstatic.com',
+    'use.typekit.net', 'use.fontawesome.com',
+]
+
+
+def get_domain_filter_config(job):
+    """
+    Build domain filtering configuration for any engine.
+    Returns dict with allowed_domains, blocked_patterns, etc.
+    """
+    opts = job.options
+    parsed = urlparse(job.url)
+    main_domain = parsed.netloc
+    
+    if main_domain.startswith('www.'):
+        base_domain = main_domain[4:]
+    else:
+        base_domain = main_domain
+    
+    # Build allowed domains list
+    allowed_domains = set()
+    allowed_domains.add(base_domain)
+    allowed_domains.add(f'www.{base_domain}')
+    allowed_domains.add(main_domain)
+    
+    # Include subdomains
+    if opts.get('include_subdomains', False):
+        allowed_domains.add(f'*.{base_domain}')
+    
+    # Extra domains from user selection
+    extra_domains = opts.get('extra_domains', '')
+    if extra_domains:
+        for d in extra_domains.split(','):
+            d = d.strip()
+            if d:
+                allowed_domains.add(d)
+    
+    # Add allowed CDN patterns
+    allowed_cdn = set(ALLOWED_CDN_PATTERNS)
+    
+    return {
+        'base_domain': base_domain,
+        'main_domain': main_domain,
+        'allowed_domains': allowed_domains,
+        'allowed_cdn': allowed_cdn,
+        'blocked_domains': BLOCKED_DOMAINS,
+    }
+
+
+def is_domain_allowed(domain, filter_config):
+    """Check if a domain is allowed based on filter config"""
+    # Check blocked list first
+    for blocked in filter_config['blocked_domains']:
+        if blocked in domain:
+            return False
+    
+    # Check if it's the main domain or subdomain
+    base = filter_config['base_domain']
+    if domain == base or domain.endswith(f'.{base}'):
+        return True
+    
+    # Check allowed domains
+    for allowed in filter_config['allowed_domains']:
+        if allowed.startswith('*.'):
+            pattern = allowed[2:]
+            if domain == pattern or domain.endswith(f'.{pattern}'):
+                return True
+        elif domain == allowed:
+            return True
+    
+    # Check allowed CDN
+    for cdn in filter_config['allowed_cdn']:
+        if domain == cdn or domain.endswith(f'.{cdn}'):
+            return True
+    
+    return False
+
+
 class WgetJob:
     def __init__(self, job_id, url, options, use_wget2=False, folder_name=None, engine='wget2'):
         self.id = job_id
@@ -135,42 +253,41 @@ class WgetJob:
 
 
 def build_wget_command(job):
-    """Build wget command from job options"""
+    """Build wget command from job options - always uses wget2"""
     print(f"[DEBUG] Building command for job {job.id}")
     print(f"[DEBUG] Options: {job.options}")
     print(f"[DEBUG] include_subdomains: {job.options.get('include_subdomains')}")
     print(f"[DEBUG] extra_domains: {job.options.get('extra_domains')}")
-    if job.use_wget2:
-        cmd = [WGET2_PATH]
-        # wget2-specific optimizations (all verified options)
-        cmd.append('--http2')  # Enable HTTP/2
-        cmd.append('--compression=br,gzip,zstd')  # All compression types
-        cmd.append('--tcp-fastopen')  # TCP Fast Open
-        cmd.append('--dns-cache')  # DNS caching
-        cmd.append('--hsts')  # HTTP Strict Transport Security
-        
-        # Progress bar style
-        if job.options.get('progress_bar', True):
-            cmd.append('--progress=bar')
-        
-        # Metalink support for mirrors
-        if job.options.get('metalink', False):
-            cmd.append('--metalink')
-        
-        # Parallel threads (default 5, max 20)
-        threads = job.options.get('parallel_threads', 10)
-        cmd.extend(['--max-threads', str(threads)])
-        
-        # HTTP/2 request window for parallel requests
-        http2_window = job.options.get('http2_window', 30)
-        cmd.extend(['--http2-request-window', str(http2_window)])
-        
-        # Chunk size for parallel download of single files
-        chunk_size = job.options.get('chunk_size', '')
-        if chunk_size:
-            cmd.extend(['--chunk-size', chunk_size])
-    else:
-        cmd = [WGET_PATH]
+    
+    # Always use wget2 (faster, HTTP/2 support)
+    cmd = [WGET2_PATH]
+    # wget2-specific optimizations (all verified options)
+    cmd.append('--http2')  # Enable HTTP/2
+    cmd.append('--compression=br,gzip,zstd')  # All compression types
+    cmd.append('--tcp-fastopen')  # TCP Fast Open
+    cmd.append('--dns-cache')  # DNS caching
+    cmd.append('--hsts')  # HTTP Strict Transport Security
+    
+    # Progress bar style
+    if job.options.get('progress_bar', True):
+        cmd.append('--progress=bar')
+    
+    # Metalink support for mirrors
+    if job.options.get('metalink', False):
+        cmd.append('--metalink')
+    
+    # Parallel threads (default 5, max 20)
+    threads = job.options.get('parallel_threads', 10)
+    cmd.extend(['--max-threads', str(threads)])
+    
+    # HTTP/2 request window for parallel requests
+    http2_window = job.options.get('http2_window', 30)
+    cmd.extend(['--http2-request-window', str(http2_window)])
+    
+    # Chunk size for parallel download of single files
+    chunk_size = job.options.get('chunk_size', '')
+    if chunk_size:
+        cmd.extend(['--chunk-size', chunk_size])
     opts = job.options
     
     # Recursive options
@@ -180,6 +297,7 @@ def build_wget_command(job):
         cmd.extend(['-l', str(depth)])
     
     # Page requisites (CSS, JS, images)
+    # -p downloads resources needed for page display
     if opts.get('page_requisites', True):
         cmd.append('-p')
     
@@ -191,74 +309,38 @@ def build_wget_command(job):
     if opts.get('adjust_extensions', True):
         cmd.append('-E')
     
-    # Collect all domains for -D option
-    domains_list = []
-    from urllib.parse import urlparse
-    parsed = urlparse(job.url)
-    main_domain = parsed.netloc
-    if main_domain.startswith('www.'):
-        base_domain = main_domain[4:]
-    else:
-        base_domain = main_domain
+    # =========================================================================
+    # DOMAIN FILTERING - Using common filter config
+    # =========================================================================
+    filter_config = get_domain_filter_config(job)
+    base_domain = filter_config['base_domain']
     
-    # Always add main domain
-    domains_list.append(base_domain)
-    domains_list.append(f'www.{base_domain}')
+    # Build domains list for -D option
+    domains_list = [base_domain, f'www.{base_domain}']
     
-    # Include subdomains - add wildcard pattern
+    # Include subdomains
     if opts.get('include_subdomains', False):
         domains_list.append(f'.{base_domain}')
     
-    # Additional domains to include
-    extra_domains = opts.get('extra_domains', '')
-    if extra_domains:
-        for d in extra_domains.split(','):
-            d = d.strip()
-            if d:
-                domains_list.append(d)
+    # Add allowed domains (extra domains from user)
+    for domain in filter_config['allowed_domains']:
+        if domain not in domains_list and not domain.startswith('*.'):
+            domains_list.append(domain)
     
-    # CRITICAL: Apply strict domain filtering
-    # -D limits which domains can be downloaded
+    # Add allowed CDN for resources
+    for cdn in filter_config['allowed_cdn']:
+        if cdn not in domains_list:
+            domains_list.append(cdn)
+    
+    # Domain filtering
     cmd.extend(['-D', ','.join(domains_list)])
     
-    # Span hosts - ONLY enable if we have multiple domains to span
-    # Without -H, wget stays on the original host only
-    if opts.get('include_subdomains', False) or extra_domains:
-        cmd.append('-H')
-        # --strict-comments helps avoid following links in comments
-        if not job.use_wget2:
-            cmd.append('--strict-comments')
+    # Reject patterns for blocked domains
+    reject_domains = ','.join([f'*{d}*' for d in filter_config['blocked_domains'][:20]])  # Limit to avoid too long command
+    cmd.extend(['--reject-regex', reject_domains])
     
-    # CRITICAL: Exclude common external domains to prevent recursive crawling
-    # This is needed because -p (page requisites) downloads resources from any domain
-    excluded_domains = [
-        'github.com', 'githubusercontent.com', 'github.io',
-        'facebook.com', 'fbcdn.net', 'facebook.net',
-        'twitter.com', 'twimg.com', 'x.com',
-        'youtube.com', 'youtube-nocookie.com', 'ytimg.com', 'googlevideo.com',
-        'google.com', 'googleapis.com', 'googletagmanager.com', 'google-analytics.com', 'gstatic.com',
-        'cloudflare.com', 'cdnjs.cloudflare.com',
-        'amazon.com', 'amazonaws.com', 'cloudfront.net',
-        'instagram.com', 'cdninstagram.com',
-        'tiktok.com', 'tiktokcdn.com',
-        'linkedin.com', 'licdn.com',
-        'pinterest.com', 'pinimg.com',
-        'apple.com', 'mzstatic.com', 'itunes.apple.com',
-        'spotify.com', 'scdn.co',
-        'vimeo.com', 'vimeocdn.com',
-        'wordpress.com', 'wp.com',
-        'gravatar.com',
-        'disqus.com', 'disquscdn.com',
-        'addthis.com', 'sharethis.com',
-        'doubleclick.net', 'googlesyndication.com',
-        'fontawesome.com', 'bootstrapcdn.com',
-        'jquery.com', 'jsdelivr.net', 'unpkg.com',
-        'typekit.net', 'fonts.googleapis.com', 'fonts.gstatic.com'
-    ]
-    # Filter out any domains that are in our allowed list
-    excluded = [d for d in excluded_domains if d not in domains_list and not any(d.endswith(allowed) for allowed in domains_list)]
-    if excluded:
-        cmd.extend(['--exclude-domains', ','.join(excluded)])
+    # Span hosts - allow following links to subdomains/extra domains
+    cmd.append('-H')
     
     # No parent (don't go up directories)
     if opts.get('no_parent', True):
@@ -348,9 +430,13 @@ def build_wget_command(job):
 
 
 def build_httrack_command(job):
-    """Build httrack command from job options"""
+    """Build httrack command from job options using common domain filtering"""
     cmd = [HTTRACK_PATH]
     opts = job.options
+    
+    # Get common filter config
+    filter_config = get_domain_filter_config(job)
+    base_domain = filter_config['base_domain']
     
     # URL first
     cmd.append(job.url)
@@ -362,38 +448,54 @@ def build_httrack_command(job):
     depth = opts.get('depth', 2)
     cmd.extend(['-r' + str(depth)])
     
-    # Extract domain for filtering
-    parsed = urlparse(job.url)
-    domain = parsed.netloc
-    if domain.startswith('www.'):
-        base_domain = domain[4:]
-    else:
-        base_domain = domain
+    # IMPORTANT: Preserve original file extensions (don't convert to .html)
+    cmd.append('-%e0')
     
-    # CRITICAL: Restrict to same domain and subdomains only
-    # +*.domain.com = allow subdomains
-    # -*/ = deny everything else by default
+    # Near mode - get external files needed for page display
+    cmd.append('--near')
+    
+    # Disable robots.txt
+    cmd.append('--robots=0')
+    
+    # Keep connections alive
+    cmd.append('--keep-alive')
+    
+    # =========================================================================
+    # DOMAIN FILTERING - Using common filter config
+    # =========================================================================
+    
+    # Allow main domain and subdomains
     if opts.get('include_subdomains', False):
-        cmd.append(f'+*.{base_domain}/*')  # Allow all subdomains
-        cmd.append(f'+{base_domain}/*')     # Allow base domain
-        cmd.append(f'+www.{base_domain}/*') # Allow www
+        cmd.append(f'+*.{base_domain}/*')
+        cmd.append(f'+{base_domain}/*')
+        cmd.append(f'+www.{base_domain}/*')
     else:
-        cmd.append(f'+{domain}/*')  # Only exact domain
+        cmd.append(f'+{filter_config["main_domain"]}/*')
     
-    # Block external domains explicitly
-    if not opts.get('span_hosts', False) and not opts.get('httrack_external', False):
-        cmd.append('-*')  # Deny all other domains
+    # Add extra domains from user selection
+    for domain in filter_config['allowed_domains']:
+        if not domain.startswith('*.') and domain != base_domain and domain != f'www.{base_domain}':
+            cmd.append(f'+{domain}/*')
+    
+    # Add allowed CDN patterns
+    for cdn in filter_config['allowed_cdn']:
+        cmd.append(f'+{cdn}/*')
+    
+    # =========================================================================
+    # BLOCK ALL EXTERNAL DOMAINS - Critical for clean downloads
+    # =========================================================================
+    
+    # Block all domains from BLOCKED_DOMAINS list
+    for blocked in filter_config['blocked_domains']:
+        cmd.append(f'-*{blocked}*')
+    
+    # Block everything else by default (must be last)
+    cmd.append('-*')
     
     # User agent
     user_agent = opts.get('user_agent', '')
     if user_agent:
         cmd.extend(['-F', user_agent])
-    
-    # Rate limit
-    rate_limit = opts.get('rate_limit', '')
-    if rate_limit:
-        # Convert to bytes/sec for httrack
-        cmd.extend(['-%c', '1'])  # Max connections
     
     # Timeout
     timeout = opts.get('timeout', 30)
@@ -559,6 +661,9 @@ def run_wget_job(job_id):
         
         process.wait()
         
+        # Post-processing: remove unwanted external domains
+        cleanup_external_domains(job)
+        
         job.status = 'completed' if process.returncode == 0 else 'failed'
         job.finished_at = datetime.now()
         update_job_stats(job)
@@ -570,6 +675,41 @@ def run_wget_job(job_id):
     
     socketio.emit('job_update', job.to_dict())
     save_jobs()
+
+
+def cleanup_external_domains(job):
+    """Remove folders of external domains using common filter config"""
+    # Use common filter config
+    filter_config = get_domain_filter_config(job)
+    
+    # Check each folder in output directory
+    if not job.output_dir.exists():
+        return
+    
+    removed_count = 0
+    for folder in job.output_dir.iterdir():
+        if not folder.is_dir():
+            continue
+        
+        folder_name = folder.name
+        
+        # Skip special folders
+        if folder_name in ('hts-cache', 'hts-log.txt', 'cookies.txt'):
+            continue
+        
+        # Use common is_domain_allowed function
+        if not is_domain_allowed(folder_name, filter_config):
+            # Remove external domain folder
+            try:
+                shutil.rmtree(folder)
+                removed_count += 1
+                job.output_lines.append(f"[Cleanup] Removed external: {folder_name}")
+            except Exception as e:
+                job.output_lines.append(f"[Cleanup] Error removing {folder_name}: {e}")
+    
+    if removed_count > 0:
+        job.output_lines.append(f"[Cleanup] Removed {removed_count} external domain folders")
+        socketio.emit('job_update', job.to_dict())
 
 
 def format_size(size_bytes):
@@ -657,24 +797,30 @@ def create_job():
     # Normalize URL for duplicate check
     normalized_url = normalize_url(url)
     
-    # Check for duplicate: same URL already running or pending
-    for existing_job in jobs.values():
-        if existing_job.status in ('running', 'pending', 'paused'):
-            if normalize_url(existing_job.url) == normalized_url:
-                return jsonify({
-                    'error': 'This URL is already being downloaded',
-                    'existing_job_id': existing_job.id
-                }), 409
-    
-    # Generate folder name from domain
-    domain = extract_domain_from_url(url)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    folder_name = f"{domain}_{timestamp}"
-    
     job_id = str(uuid.uuid4())[:8]
     options = data.get('options', {})
     use_wget2 = data.get('use_wget2', False)
     engine = data.get('engine', 'wget2' if use_wget2 else 'wget')
+    
+    # Generate folder name from domain + engine (allows different methods for same site)
+    domain = extract_domain_from_url(url)
+    folder_name = f"{domain}_{engine}"
+    
+    # Check for duplicate: same URL + same engine already exists
+    for existing_job in jobs.values():
+        if normalize_url(existing_job.url) == normalized_url and existing_job.engine == engine:
+            status_msg = {
+                'running': 'is currently being downloaded',
+                'pending': 'is pending download',
+                'paused': 'is paused',
+                'completed': 'was already downloaded',
+                'stopped': 'was stopped',
+                'failed': 'failed previously'
+            }.get(existing_job.status, 'exists')
+            return jsonify({
+                'error': f'This URL ({engine}) {status_msg}. Delete the existing job first to re-download.',
+                'existing_job_id': existing_job.id
+            }), 409
     
     job = WgetJob(job_id, url, options, use_wget2, folder_name, engine)
     jobs[job_id] = job
@@ -886,7 +1032,6 @@ def get_config():
     wget2_available = os.path.exists(WGET2_PATH)
     return jsonify({
         'downloads_dir': str(DOWNLOADS_DIR),
-        'wget_path': WGET_PATH,
         'wget2_path': WGET2_PATH,
         'wget2_available': wget2_available
     })
@@ -1115,7 +1260,27 @@ def scan_site():
     visited = set()
     subdomains = {}  # {subdomain: {'count': N, 'sample_urls': []}}
     related_domains = {}  # Domains containing brand name
+    cdn_domains = {}  # CDN domains (shopify, cloudflare, etc.)
+    external_domains = {}  # Other external domains
     to_visit = [url]
+    
+    # Known CDN patterns
+    cdn_patterns = [
+        'cdn.', 'static.', 'assets.', 'media.', 'images.', 'img.',
+        'shopify.com', 'shopifycdn.com', 'cloudflare.com', 'cloudfront.net',
+        'amazonaws.com', 's3.', 'googleapis.com', 'gstatic.com',
+        'jsdelivr.net', 'unpkg.com', 'cdnjs.', 'bootstrapcdn.com',
+        'fontawesome.com', 'fonts.google', 'typekit.net',
+        'akamai', 'fastly', 'cloudinary.com', 'imgix.net'
+    ]
+    
+    # Known external/tracking domains to categorize separately
+    external_patterns = [
+        'facebook.com', 'twitter.com', 'instagram.com', 'youtube.com',
+        'google.com', 'googletagmanager.com', 'google-analytics.com',
+        'linkedin.com', 'pinterest.com', 'tiktok.com',
+        'doubleclick.net', 'adsrvr.org', 'adroll.com'
+    ]
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -1158,40 +1323,37 @@ def scan_site():
                     if not link_domain:
                         continue
                     
-                    # Check if it's a subdomain of root domain OR contains brand name
+                    # Determine domain category
                     is_subdomain = link_domain.endswith(root_domain) or link_domain == root_domain
                     is_related = brand_name.lower() in link_domain.lower() and len(brand_name) >= 4
+                    is_cdn = any(p in link_domain.lower() for p in cdn_patterns)
+                    is_external = any(p in link_domain.lower() for p in external_patterns)
+                    
+                    # Helper to add domain to dict
+                    def add_to_dict(d, domain, is_main=False):
+                        if domain not in d:
+                            d[domain] = {'count': 0, 'sample_urls': [], 'is_main': is_main}
+                        d[domain]['count'] += 1
+                        if len(d[domain]['sample_urls']) < 3:
+                            clean_url = f"{link_parsed.scheme}://{link_parsed.netloc}{link_parsed.path}"
+                            if clean_url not in d[domain]['sample_urls']:
+                                d[domain]['sample_urls'].append(clean_url)
                     
                     if is_subdomain:
-                        if link_domain not in subdomains:
-                            subdomains[link_domain] = {
-                                'count': 0,
-                                'sample_urls': [],
-                                'is_main': link_domain == parsed.netloc or link_domain == base_domain or link_domain == f'www.{base_domain}'
-                            }
-                        subdomains[link_domain]['count'] += 1
-                        if len(subdomains[link_domain]['sample_urls']) < 3:
-                            clean_url = f"{link_parsed.scheme}://{link_parsed.netloc}{link_parsed.path}"
-                            if clean_url not in subdomains[link_domain]['sample_urls']:
-                                subdomains[link_domain]['sample_urls'].append(clean_url)
-                        
+                        is_main = link_domain == parsed.netloc or link_domain == base_domain or link_domain == f'www.{base_domain}'
+                        add_to_dict(subdomains, link_domain, is_main)
                         # Add to visit queue if same main domain
                         if link_domain == parsed.netloc and href not in visited:
                             to_visit.append(href)
-                    
                     elif is_related:
-                        # Track related domains (contain brand name but different TLD)
-                        if link_domain not in related_domains:
-                            related_domains[link_domain] = {
-                                'count': 0,
-                                'sample_urls': [],
-                                'is_main': False
-                            }
-                        related_domains[link_domain]['count'] += 1
-                        if len(related_domains[link_domain]['sample_urls']) < 3:
-                            clean_url = f"{link_parsed.scheme}://{link_parsed.netloc}{link_parsed.path}"
-                            if clean_url not in related_domains[link_domain]['sample_urls']:
-                                related_domains[link_domain]['sample_urls'].append(clean_url)
+                        add_to_dict(related_domains, link_domain)
+                    elif is_cdn:
+                        add_to_dict(cdn_domains, link_domain)
+                    elif is_external:
+                        add_to_dict(external_domains, link_domain)
+                    else:
+                        # Other external domains
+                        add_to_dict(external_domains, link_domain)
                 except:
                     continue
                     
@@ -1199,38 +1361,42 @@ def scan_site():
             print(f"[Scan] Error fetching {current_url}: {e}")
             continue
     
-    # Convert to list and sort
-    result = []
-    
-    # Add subdomains (same root domain)
-    for domain, info in subdomains.items():
-        result.append({
+    # Convert to categorized lists
+    def to_list(d, domain_type):
+        return sorted([{
             'domain': domain,
             'count': info['count'],
             'sample_urls': info['sample_urls'],
-            'is_main': info['is_main'],
-            'type': 'subdomain'
-        })
+            'is_main': info.get('is_main', False),
+            'type': domain_type
+        } for domain, info in d.items()], key=lambda x: (-x['is_main'], -x['count']))
     
-    # Add related domains (contain brand name)
-    for domain, info in related_domains.items():
-        result.append({
-            'domain': domain,
-            'count': info['count'],
-            'sample_urls': info['sample_urls'],
-            'is_main': False,
-            'type': 'related'
-        })
+    main_domains = to_list(subdomains, 'main')
+    related_list = to_list(related_domains, 'related')
+    cdn_list = to_list(cdn_domains, 'cdn')
+    external_list = to_list(external_domains, 'external')
     
-    # Sort: main first, then by count
-    result.sort(key=lambda x: (-x['is_main'], -x['count']))
+    # Combined list for backward compatibility
+    all_domains = main_domains + related_list + cdn_list + external_list
     
     return jsonify({
         'base_domain': base_domain,
         'root_domain': root_domain,
         'brand_name': brand_name,
         'pages_scanned': pages_scanned,
-        'subdomains': result
+        'subdomains': all_domains,  # backward compatibility
+        'categories': {
+            'main': main_domains,
+            'related': related_list,
+            'cdn': cdn_list,
+            'external': external_list
+        },
+        'counts': {
+            'main': len(main_domains),
+            'related': len(related_list),
+            'cdn': len(cdn_list),
+            'external': len(external_list)
+        }
     })
 
 
@@ -1241,7 +1407,7 @@ def handle_connect():
 
 if __name__ == '__main__':
     print(f"Wget Admin starting...")
-    print(f"Using wget: {WGET_PATH}")
+    print(f"Using wget2: {WGET2_PATH}")
     print(f"Downloads dir: {DOWNLOADS_DIR}")
     load_jobs()  # Load saved jobs on startup
     socketio.run(app, host='0.0.0.0', port=5050, debug=True)
