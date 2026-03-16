@@ -1,10 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { io } from 'socket.io-client'
 
 export const useJobsStore = defineStore('jobs', () => {
   const jobs = ref(new Map())
-  const socket = ref(null)
   
   const activeJobs = computed(() => {
     return Array.from(jobs.value.values())
@@ -17,26 +15,8 @@ export const useJobsStore = defineStore('jobs', () => {
   })
   
   function initSocket() {
-    const socketUrl = window.location.hostname === 'localhost'
-      ? 'http://localhost:8888'
-      : window.location.origin
-    socket.value = io(socketUrl, {
-      transports: ['websocket', 'polling']
-    })
-    
-    socket.value.on('connect', () => {
-      console.log('[Socket] Connected')
-      loadJobs()
-    })
-    
-    socket.value.on('job_update', (data) => {
-      console.log('[Socket] Job update:', data.id)
-      jobs.value.set(data.id, data)
-    })
-    
-    socket.value.on('disconnect', () => {
-      console.log('[Socket] Disconnected')
-    })
+    // WebSocket отключен - просто загружаем задачи
+    loadJobs()
   }
   
   async function loadJobs() {
