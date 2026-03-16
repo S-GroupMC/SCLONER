@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wget Admin - Клонирование сайтов</title>
+    <title>Black Rabbit Cloner - Клонирование сайтов</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.0/socket.io.min.js"></script>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <style>
         .gradient-bg {
@@ -38,6 +39,12 @@
                         <h1 class="text-2xl font-bold">Wget Admin</h1>
                         <p class="text-purple-200 text-sm">Клонирование и загрузка сайтов</p>
                     </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/landings" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm transition flex items-center space-x-2">
+                        <i class="fas fa-layer-group"></i>
+                        <span>Landing Manager</span>
+                    </a>
                 </div>
                 <div class="text-right">
                     <span class="text-purple-200 text-sm">На базе GNU Wget</span>
@@ -772,6 +779,8 @@
         
         // Flag to track if we should start cloning after scan
         let startCloningAfterScan = false;
+        // Track last scanned URL to avoid re-scanning same URL
+        let lastScannedUrl = '';
         
         // Form submit - first scan subdomains, then clone
         document.getElementById('newJobForm').addEventListener('submit', async (e) => {
@@ -782,11 +791,11 @@
             
             // Check if subdomains option is enabled - if so, scan first
             const includeSubdomains = document.getElementById('includeSubdomains').checked;
-            const extraDomains = document.getElementById('extraDomains').value.trim();
             
-            // If subdomains enabled and no extra domains selected yet, scan first
-            if (includeSubdomains && !extraDomains) {
+            // Always scan if subdomains enabled and URL changed or never scanned
+            if (includeSubdomains && url !== lastScannedUrl) {
                 startCloningAfterScan = true;
+                lastScannedUrl = url;
                 scanSite();
                 return;
             }
@@ -1708,16 +1717,36 @@
                 scannedSubdomains = data.subdomains;
                 selectedDomains = new Set();
                 
-                // Auto-select main domains
-                scannedSubdomains.forEach(s => {
-                    if (s.is_main) {
-                        selectedDomains.add(s.domain);
-                    }
-                });
+                // Store categories for rendering
+                if (data.categories) {
+                    scanCategories = data.categories;
+                } else {
+                    // Fallback: categorize from flat list
+                    scanCategories = { main: [], related: [], cdn: [], external: [] };
+                    scannedSubdomains.forEach(s => {
+                        const cat = s.type === 'subdomain' ? 'main' : (s.type || 'external');
+                        if (scanCategories[cat]) scanCategories[cat].push(s);
+                    });
+                }
+                
+                // Auto-select main domains, subdomains, CDN AND related domains
+                if (scanCategories.main) {
+                    scanCategories.main.forEach(s => selectedDomains.add(s.domain));
+                }
+                if (scanCategories.cdn) {
+                    scanCategories.cdn.forEach(s => selectedDomains.add(s.domain));
+                }
+                if (scanCategories.related) {
+                    scanCategories.related.forEach(s => selectedDomains.add(s.domain));
+                }
                 
                 // Update UI
                 document.getElementById('scanPagesCount').textContent = data.pages_scanned;
                 document.getElementById('scanBaseDomain').textContent = data.base_domain;
+                
+                // Show category counts
+                const counts = data.counts || {};
+                console.log('[Scan] Categories:', counts);
                 
                 renderSubdomainsList();
                 
@@ -1732,16 +1761,25 @@
             }
         }
         
+        // Store categories from scan
+        let scanCategories = { main: [], related: [], cdn: [], external: [] };
+        
         function renderSubdomainsList() {
             const container = document.getElementById('subdomainsList');
-            container.innerHTML = scannedSubdomains.map(s => {
+            
+            // Render domain item
+            function renderDomainItem(s) {
                 const isSelected = selectedDomains.has(s.domain);
-                const mainBadge = s.is_main ? '<span class="ml-2 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">main</span>' : '';
-                const typeBadge = s.type === 'related' ? '<span class="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded">related</span>' : '';
-                // Show sample URLs if available
+                const badges = {
+                    'main': s.is_main ? '<span class="ml-2 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">main</span>' : '',
+                    'related': '<span class="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded">related</span>',
+                    'cdn': '<span class="ml-2 px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">CDN</span>',
+                    'external': '<span class="ml-2 px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded">external</span>'
+                };
+                const badge = s.type === 'main' ? badges.main : (badges[s.type] || '');
                 const sampleUrls = s.sample_urls && s.sample_urls.length > 0 
                     ? `<div class="mt-2 text-xs text-gray-400 space-y-1">
-                        ${s.sample_urls.map(url => `<div class="truncate"><i class="fas fa-external-link-alt mr-1"></i><a href="${url}" target="_blank" class="hover:text-indigo-500">${url}</a></div>`).join('')}
+                        ${s.sample_urls.slice(0, 2).map(url => `<div class="truncate"><i class="fas fa-external-link-alt mr-1"></i><a href="${url}" target="_blank" class="hover:text-indigo-500">${url}</a></div>`).join('')}
                        </div>` 
                     : '';
                 return `
@@ -1755,7 +1793,7 @@
                         <div class="flex-1">
                             <div class="flex items-center flex-wrap">
                                 <label for="domain_${s.domain.replace(/\./g, '_')}" class="font-medium text-gray-800 cursor-pointer">${s.domain}</label>
-                                ${mainBadge}${typeBadge}
+                                ${badge}
                             </div>
                             <div class="text-xs text-gray-500 mt-1">
                                 <i class="fas fa-link mr-1"></i>${s.count} links
@@ -1763,11 +1801,63 @@
                         </div>
                     </div>
                     ${sampleUrls}
-                </div>
-                `;
-            }).join('');
+                </div>`;
+            }
+            
+            // Render category section
+            function renderCategory(title, icon, domains, color, defaultOpen = true) {
+                if (!domains || domains.length === 0) return '';
+                const selectedInCat = domains.filter(d => selectedDomains.has(d.domain)).length;
+                return `
+                <div class="mb-4">
+                    <div class="flex items-center justify-between mb-2 p-2 bg-${color}-50 rounded-lg cursor-pointer" onclick="toggleCategory('${title}')">
+                        <div class="flex items-center">
+                            <i class="fas ${icon} text-${color}-600 mr-2"></i>
+                            <span class="font-semibold text-${color}-800">${title}</span>
+                            <span class="ml-2 text-sm text-${color}-600">(${domains.length})</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs text-${color}-600">${selectedInCat} selected</span>
+                            <button onclick="event.stopPropagation(); selectCategory('${title}')" class="px-2 py-1 text-xs bg-${color}-200 hover:bg-${color}-300 rounded">All</button>
+                            <button onclick="event.stopPropagation(); deselectCategory('${title}')" class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">None</button>
+                        </div>
+                    </div>
+                    <div id="cat_${title}" class="space-y-2 ${defaultOpen ? '' : 'hidden'}">
+                        ${domains.map(renderDomainItem).join('')}
+                    </div>
+                </div>`;
+            }
+            
+            container.innerHTML = 
+                renderCategory('Main & Subdomains', 'fa-globe', scanCategories.main, 'green', true) +
+                renderCategory('Related Domains (brand)', 'fa-link', scanCategories.related, 'yellow', true) +
+                renderCategory('CDN Resources', 'fa-cloud', scanCategories.cdn, 'blue', true) +
+                renderCategory('External', 'fa-external-link-alt', scanCategories.external, 'red', false);
             
             updateSelectedCount();
+        }
+        
+        function toggleCategory(title) {
+            const el = document.getElementById('cat_' + title);
+            if (el) el.classList.toggle('hidden');
+        }
+        
+        function selectCategory(title) {
+            const catMap = { 'Main & Subdomains': 'main', 'Related Domains': 'related', 'CDN Resources': 'cdn', 'External': 'external' };
+            const cat = catMap[title];
+            if (cat && scanCategories[cat]) {
+                scanCategories[cat].forEach(d => selectedDomains.add(d.domain));
+                renderSubdomainsList();
+            }
+        }
+        
+        function deselectCategory(title) {
+            const catMap = { 'Main & Subdomains': 'main', 'Related Domains': 'related', 'CDN Resources': 'cdn', 'External': 'external' };
+            const cat = catMap[title];
+            if (cat && scanCategories[cat]) {
+                scanCategories[cat].forEach(d => selectedDomains.delete(d.domain));
+                renderSubdomainsList();
+            }
         }
         
         function toggleDomain(domain) {

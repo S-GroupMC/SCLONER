@@ -23,11 +23,13 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Configuration
 BASE_DIR = Path(__file__).parent.parent
-WGET2_PATH = os.environ.get('WGET2_PATH', str(BASE_DIR / 'bin' / 'wget2'))
-HTTRACK_PATH = os.environ.get('HTTRACK_PATH', '/opt/homebrew/bin/httrack')
+WGET2_PATH = str(BASE_DIR / 'bin' / 'wget2')  # Always use local wget2
+HTTRACK_PATH = str(BASE_DIR / 'bin' / 'httrack')  # Always use local httrack
 PUPPETEER_SCRIPT = BASE_DIR / 'admin' / 'puppeteer-crawler.js'
 DOWNLOADS_DIR = BASE_DIR / 'downloads'
 DOWNLOADS_DIR.mkdir(exist_ok=True)
+PREVIEWS_DIR = BASE_DIR / 'admin' / 'static' / 'previews'
+PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
 JOBS_FILE = BASE_DIR / 'admin' / 'jobs.json'
 
 # Store active jobs
@@ -92,6 +94,1049 @@ def load_jobs():
         print(f"Loaded {len(jobs)} jobs from file")
     except Exception as e:
         print(f"Error loading jobs: {e}")
+
+
+# =============================================================================
+# SITE CHANGES CHECKER - Check for updates on downloaded sites
+# =============================================================================
+
+def check_site_changes(folder_path, url):
+    """
+    Check if the live site has changes compared to downloaded version
+    
+    Args:
+        folder_path: Path to the downloaded site folder
+        url: Original URL of the site
+    
+    Returns:
+        dict with changes info: {
+            'has_changes': bool,
+            'changed_files': list,
+            'new_files': list,
+            'deleted_files': list,
+            'total_changes': int
+        }
+    """
+    import hashlib
+    import requests
+    from bs4 import BeautifulSoup
+    
+    folder_path = Path(folder_path)
+    if not folder_path.exists():
+        return {'error': 'Folder not found'}
+    
+    # Файл для хранения хешей
+    hashes_file = folder_path / '_wcloner' / 'file_hashes.json'
+    
+    try:
+        # Загружаем сохранённые хеши или создаём новые
+        if hashes_file.exists():
+            with open(hashes_file, 'r') as f:
+                saved_hashes = json.load(f)
+        else:
+            # Создаём хеши для текущих файлов
+            saved_hashes = {}
+            for file_path in folder_path.rglob('*'):
+                if file_path.is_file() and '_wcloner' not in str(file_path):
+                    rel_path = str(file_path.relative_to(folder_path))
+                    with open(file_path, 'rb') as f:
+                        file_hash = hashlib.md5(f.read()).hexdigest()
+                    saved_hashes[rel_path] = file_hash
+            
+            # Сохраняем хеши
+            hashes_file.parent.mkdir(exist_ok=True)
+            with open(hashes_file, 'w') as f:
+                json.dump(saved_hashes, f, indent=2)
+        
+        # Проверяем главную страницу онлайн
+        print(f"[Changes] Checking {url}...")
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return {
+                'error': f'HTTP {response.status_code}',
+                'has_changes': False
+            }
+        
+        # Вычисляем хеш онлайн версии
+        online_hash = hashlib.md5(response.content).hexdigest()
+        
+        # Находим локальный index.html
+        local_index = None
+        for possible_path in ['index.html', '_site/index.html', f'{urlparse(url).netloc}/index.html']:
+            full_path = folder_path / possible_path
+            if full_path.exists():
+                local_index = full_path
+                break
+        
+        if not local_index:
+            return {
+                'error': 'Local index.html not found',
+                'has_changes': False
+            }
+        
+        # Вычисляем хеш локальной версии
+        with open(local_index, 'rb') as f:
+            local_hash = hashlib.md5(f.read()).hexdigest()
+        
+        has_changes = online_hash != local_hash
+        
+        result = {
+            'has_changes': has_changes,
+            'url': url,
+            'checked_at': datetime.now().isoformat(),
+            'online_hash': online_hash,
+            'local_hash': local_hash,
+            'status': 'changes_detected' if has_changes else 'up_to_date'
+        }
+        
+        if has_changes:
+            # Пытаемся определить что изменилось
+            try:
+                online_soup = BeautifulSoup(response.content, 'html.parser')
+                with open(local_index, 'r', encoding='utf-8') as f:
+                    local_soup = BeautifulSoup(f.read(), 'html.parser')
+                
+                # Сравниваем title
+                online_title = online_soup.title.string if online_soup.title else ''
+                local_title = local_soup.title.string if local_soup.title else ''
+                
+                result['title_changed'] = online_title != local_title
+                result['online_title'] = online_title
+                result['local_title'] = local_title
+                
+                # Считаем количество элементов
+                result['online_elements'] = len(online_soup.find_all())
+                result['local_elements'] = len(local_soup.find_all())
+                
+            except Exception as e:
+                print(f"[Changes] Error parsing HTML: {e}")
+        
+        print(f"[Changes] Result: {'CHANGES DETECTED' if has_changes else 'UP TO DATE'}")
+        
+        return result
+        
+    except requests.RequestException as e:
+        return {
+            'error': f'Network error: {str(e)}',
+            'has_changes': False
+        }
+    except Exception as e:
+        print(f"[Changes] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'error': str(e),
+            'has_changes': False
+        }
+
+
+def check_page_changes(folder_path, base_url, page_path):
+    """
+    Check if a specific page has changes compared to the online version.
+    
+    Args:
+        folder_path: Path to the downloaded site folder
+        base_url: Base URL of the original site
+        page_path: Relative path to the HTML page (e.g. 'about.html' or 'blog/post.html')
+    """
+    import hashlib
+    import requests
+    from bs4 import BeautifulSoup
+    from urllib.parse import urlparse, urljoin
+    
+    folder_path = Path(folder_path)
+    local_file = folder_path / page_path
+    
+    if not local_file.exists():
+        return {'error': f'Local file not found: {page_path}', 'has_changes': False}
+    
+    # Определяем онлайн URL страницы
+    parsed = urlparse(base_url)
+    # Если page_path содержит поддомен, строим URL из него
+    parts = page_path.split(os.sep)
+    if len(parts) > 1 and '.' in parts[0]:
+        # Путь вида "subdomain.example.com/page.html"
+        online_url = f"https://{parts[0]}/{'/'.join(parts[1:])}"
+    else:
+        online_url = urljoin(base_url.rstrip('/') + '/', page_path)
+    
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(online_url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return {
+                'error': f'HTTP {response.status_code} for {online_url}',
+                'has_changes': False
+            }
+        
+        online_hash = hashlib.md5(response.content).hexdigest()
+        online_size = len(response.content)
+        
+        with open(local_file, 'rb') as f:
+            local_content = f.read()
+            local_hash = hashlib.md5(local_content).hexdigest()
+            local_size = len(local_content)
+        
+        has_changes = online_hash != local_hash
+        
+        result = {
+            'has_changes': has_changes,
+            'page': page_path,
+            'online_url': online_url,
+            'checked_at': datetime.now().isoformat(),
+            'online_hash': online_hash,
+            'local_hash': local_hash,
+            'online_size': format_size(online_size),
+            'local_size': format_size(local_size),
+            'size_changed': abs(online_size - local_size) > 100,
+            'status': 'changes_detected' if has_changes else 'up_to_date'
+        }
+        
+        if has_changes:
+            try:
+                online_soup = BeautifulSoup(response.content, 'html.parser')
+                local_soup = BeautifulSoup(local_content, 'html.parser')
+                
+                online_title = online_soup.title.string.strip() if online_soup.title and online_soup.title.string else ''
+                local_title = local_soup.title.string.strip() if local_soup.title and local_soup.title.string else ''
+                
+                result['title_changed'] = online_title != local_title
+                result['online_title'] = online_title
+                result['local_title'] = local_title
+            except Exception as e:
+                print(f"[PageChanges] Error parsing HTML: {e}")
+        
+        print(f"[PageChanges] {page_path}: {'CHANGES' if has_changes else 'UP TO DATE'}")
+        return result
+        
+    except requests.RequestException as e:
+        return {
+            'error': f'Network error: {str(e)}',
+            'has_changes': False
+        }
+    except Exception as e:
+        print(f"[PageChanges] Error: {e}")
+        return {
+            'error': str(e),
+            'has_changes': False
+        }
+
+
+def check_all_pages_changes(folder_path, base_url, max_pages=50):
+    """
+    Check all HTML pages in a folder for changes.
+    Returns detailed info for each page.
+    """
+    import hashlib
+    import requests
+    from bs4 import BeautifulSoup
+    from urllib.parse import urlparse, urljoin
+    
+    folder_path = Path(folder_path)
+    results = []
+    
+    # Find all HTML files
+    html_files = list(folder_path.rglob('*.html'))[:max_pages]
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    }
+    
+    for html_file in html_files:
+        page_path = str(html_file.relative_to(folder_path))
+        
+        # Determine online URL
+        parts = page_path.split(os.sep)
+        if len(parts) > 1 and '.' in parts[0]:
+            online_url = f"https://{parts[0]}/{'/'.join(parts[1:])}"
+        else:
+            online_url = urljoin(base_url.rstrip('/') + '/', page_path)
+        
+        result = {
+            'page': page_path,
+            'name': html_file.name,
+            'online_url': online_url,
+            'local_size': format_size(html_file.stat().st_size),
+            'local_size_bytes': html_file.stat().st_size
+        }
+        
+        try:
+            response = requests.get(online_url, headers=headers, timeout=10)
+            
+            if response.status_code != 200:
+                result['status'] = 'error'
+                result['error'] = f'HTTP {response.status_code}'
+                result['has_changes'] = False
+            else:
+                online_hash = hashlib.md5(response.content).hexdigest()
+                online_size = len(response.content)
+                
+                with open(html_file, 'rb') as f:
+                    local_content = f.read()
+                    local_hash = hashlib.md5(local_content).hexdigest()
+                
+                has_changes = online_hash != local_hash
+                result['has_changes'] = has_changes
+                result['online_size'] = format_size(online_size)
+                result['online_size_bytes'] = online_size
+                result['size_diff'] = online_size - html_file.stat().st_size
+                result['status'] = 'changed' if has_changes else 'unchanged'
+                
+                if has_changes:
+                    try:
+                        online_soup = BeautifulSoup(response.content, 'html.parser')
+                        local_soup = BeautifulSoup(local_content, 'html.parser')
+                        
+                        online_title = online_soup.title.string.strip() if online_soup.title and online_soup.title.string else ''
+                        local_title = local_soup.title.string.strip() if local_soup.title and local_soup.title.string else ''
+                        
+                        result['title_changed'] = online_title != local_title
+                        result['online_title'] = online_title
+                        result['local_title'] = local_title
+                        
+                        # Count elements difference
+                        result['online_elements'] = len(online_soup.find_all())
+                        result['local_elements'] = len(local_soup.find_all())
+                    except:
+                        pass
+                        
+        except requests.RequestException as e:
+            result['status'] = 'error'
+            result['error'] = str(e)[:50]
+            result['has_changes'] = False
+        except Exception as e:
+            result['status'] = 'error'
+            result['error'] = str(e)[:50]
+            result['has_changes'] = False
+        
+        results.append(result)
+    
+    # Summary
+    changed = sum(1 for r in results if r.get('has_changes'))
+    unchanged = sum(1 for r in results if r.get('status') == 'unchanged')
+    errors = sum(1 for r in results if r.get('status') == 'error')
+    
+    return {
+        'total': len(results),
+        'changed': changed,
+        'unchanged': unchanged,
+        'errors': errors,
+        'pages': results,
+        'checked_at': datetime.now().isoformat()
+    }
+
+
+# =============================================================================
+# INTEGRITY CHECK - Verify all referenced resources are downloaded
+# =============================================================================
+
+def check_site_integrity(folder_path):
+    """
+    Parse HTML and CSS files to find all referenced resources,
+    then check if each resource exists locally.
+    
+    Returns dict with missing files list and stats.
+    """
+    import re
+    from urllib.parse import urlparse, unquote
+    
+    folder_path = Path(folder_path)
+    if not folder_path.exists():
+        return {'error': 'Folder not found'}
+    
+    referenced = {}  # path -> set of referencing files
+    existing_files = set()
+    
+    # Collect all existing files
+    for f in folder_path.rglob('*'):
+        if f.is_file() and '_wcloner' not in str(f):
+            rel = str(f.relative_to(folder_path))
+            existing_files.add(rel)
+    
+    def normalize_ref(ref_path, context_file):
+        """Resolve a relative reference from a context file to a folder-relative path"""
+        ref_path = ref_path.strip().strip("'\"")
+        ref_path = unquote(ref_path)
+        
+        # Skip data URIs, external URLs, anchors, empty
+        if not ref_path or ref_path.startswith(('data:', 'http://', 'https://', 'mailto:', 'tel:', '#', 'javascript:', '//')):
+            return None
+        
+        # Remove query string and fragment
+        ref_path = ref_path.split('?')[0].split('#')[0]
+        if not ref_path:
+            return None
+        
+        # Resolve relative to the directory of context_file
+        context_dir = str(Path(context_file).parent)
+        if ref_path.startswith('/'):
+            # Absolute path from site root - find the subdomain/domain dir
+            parts = context_file.split('/')
+            # If inside a subdomain dir like "sub.example.com/page.html"
+            if len(parts) > 1 and '.' in parts[0]:
+                resolved = parts[0] + ref_path
+            else:
+                resolved = ref_path.lstrip('/')
+        else:
+            if context_dir and context_dir != '.':
+                resolved = str(Path(context_dir) / ref_path)
+            else:
+                resolved = ref_path
+        
+        # Normalize path (resolve ..)
+        try:
+            resolved = str(Path(resolved))
+            # Remove leading ./
+            if resolved.startswith('./'):
+                resolved = resolved[2:]
+        except:
+            return None
+        
+        return resolved
+    
+    # Parse HTML files
+    html_tag_re = re.compile(r'(?:src|href|data-src|poster|srcset)\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+    css_url_re = re.compile(r'url\(\s*["\']?([^"\')\s]+)["\']?\s*\)', re.IGNORECASE)
+    css_import_re = re.compile(r'@import\s+["\']([^"\']+)["\']', re.IGNORECASE)
+    js_import_re = re.compile(r'(?:import|from)\s+["\']([^"\']+)["\']', re.IGNORECASE)
+    
+    for f in folder_path.rglob('*'):
+        if not f.is_file() or '_wcloner' in str(f):
+            continue
+        
+        rel_path = str(f.relative_to(folder_path))
+        ext = f.suffix.lower()
+        
+        try:
+            if ext in ('.html', '.htm'):
+                content = f.read_text(encoding='utf-8', errors='ignore')
+                # HTML tags: src, href, data-src, poster
+                for match in html_tag_re.finditer(content):
+                    ref = match.group(1)
+                    # Handle srcset (multiple URLs)
+                    if ',' in ref and ' ' in ref:
+                        for part in ref.split(','):
+                            url_part = part.strip().split(' ')[0]
+                            resolved = normalize_ref(url_part, rel_path)
+                            if resolved:
+                                referenced.setdefault(resolved, set()).add(rel_path)
+                    else:
+                        resolved = normalize_ref(ref, rel_path)
+                        if resolved:
+                            referenced.setdefault(resolved, set()).add(rel_path)
+                
+                # Inline CSS url()
+                for match in css_url_re.finditer(content):
+                    resolved = normalize_ref(match.group(1), rel_path)
+                    if resolved:
+                        referenced.setdefault(resolved, set()).add(rel_path)
+                
+            elif ext == '.css':
+                content = f.read_text(encoding='utf-8', errors='ignore')
+                # CSS url()
+                for match in css_url_re.finditer(content):
+                    resolved = normalize_ref(match.group(1), rel_path)
+                    if resolved:
+                        referenced.setdefault(resolved, set()).add(rel_path)
+                # @import
+                for match in css_import_re.finditer(content):
+                    resolved = normalize_ref(match.group(1), rel_path)
+                    if resolved:
+                        referenced.setdefault(resolved, set()).add(rel_path)
+                
+            elif ext in ('.js', '.mjs'):
+                content = f.read_text(encoding='utf-8', errors='ignore')
+                # JS import/from (static imports and chunk references)
+                for match in js_import_re.finditer(content):
+                    ref = match.group(1)
+                    if ref.endswith(('.js', '.mjs', '.css', '.json')):
+                        resolved = normalize_ref(ref, rel_path)
+                        if resolved:
+                            referenced.setdefault(resolved, set()).add(rel_path)
+                # Dynamic import() 
+                dynamic_re = re.compile(r'import\(\s*["\']([^"\']+)["\']', re.IGNORECASE)
+                for match in dynamic_re.finditer(content):
+                    resolved = normalize_ref(match.group(1), rel_path)
+                    if resolved:
+                        referenced.setdefault(resolved, set()).add(rel_path)
+        except Exception as e:
+            print(f"[Integrity] Error parsing {rel_path}: {e}")
+            continue
+    
+    # Find missing files
+    missing = []
+    for ref_path, sources in referenced.items():
+        if ref_path not in existing_files:
+            # Try with index.html appended for directory refs
+            if ref_path + '/index.html' not in existing_files and ref_path.rstrip('/') + '/index.html' not in existing_files:
+                missing.append({
+                    'path': ref_path,
+                    'referenced_by': sorted(list(sources))[:5],
+                    'ref_count': len(sources)
+                })
+    
+    # Categorize missing by type
+    missing_by_type = {'css': 0, 'js': 0, 'images': 0, 'fonts': 0, 'other': 0}
+    image_exts = {'.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.ico', '.bmp', '.avif'}
+    font_exts = {'.woff', '.woff2', '.ttf', '.eot', '.otf'}
+    
+    for item in missing:
+        ext = Path(item['path']).suffix.lower()
+        if ext in ('.css',):
+            missing_by_type['css'] += 1
+        elif ext in ('.js', '.mjs'):
+            missing_by_type['js'] += 1
+        elif ext in image_exts:
+            missing_by_type['images'] += 1
+        elif ext in font_exts:
+            missing_by_type['fonts'] += 1
+        else:
+            missing_by_type['other'] += 1
+    
+    # Sort: most referenced first
+    missing.sort(key=lambda x: x['ref_count'], reverse=True)
+    
+    return {
+        'total_referenced': len(referenced),
+        'total_existing': len(existing_files),
+        'total_missing': len(missing),
+        'missing_by_type': missing_by_type,
+        'missing': missing[:200],  # Limit to 200
+        'is_complete': len(missing) == 0,
+        'checked_at': datetime.now().isoformat()
+    }
+
+
+def download_missing_files(folder_path, base_url, missing_paths):
+    """
+    Download missing files from the original site.
+    Returns results for each file.
+    """
+    import requests
+    from urllib.parse import urlparse
+    
+    folder_path = Path(folder_path)
+    results = []
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    }
+    
+    for file_path in missing_paths:
+        # Determine URL
+        parts = file_path.split('/')
+        if len(parts) > 1 and '.' in parts[0]:
+            # Subdomain path like "sub.example.com/assets/style.css"
+            url = f"https://{parts[0]}/{'/'.join(parts[1:])}"
+        else:
+            parsed = urlparse(base_url)
+            url = f"{parsed.scheme}://{parsed.netloc}/{file_path}"
+        
+        local_file = folder_path / file_path
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+            
+            if response.status_code == 200 and len(response.content) > 0:
+                local_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(local_file, 'wb') as f:
+                    f.write(response.content)
+                
+                results.append({
+                    'path': file_path,
+                    'status': 'downloaded',
+                    'size': format_size(len(response.content)),
+                    'url': url
+                })
+                print(f"[Download] OK: {file_path} ({format_size(len(response.content))})")
+            else:
+                results.append({
+                    'path': file_path,
+                    'status': 'failed',
+                    'error': f'HTTP {response.status_code}',
+                    'url': url
+                })
+                print(f"[Download] FAIL: {file_path} - HTTP {response.status_code}")
+        except Exception as e:
+            results.append({
+                'path': file_path,
+                'status': 'error',
+                'error': str(e),
+                'url': url
+            })
+            print(f"[Download] ERROR: {file_path} - {e}")
+    
+    downloaded = sum(1 for r in results if r['status'] == 'downloaded')
+    failed = sum(1 for r in results if r['status'] != 'downloaded')
+    
+    return {
+        'total': len(results),
+        'downloaded': downloaded,
+        'failed': failed,
+        'results': results
+    }
+
+
+# =============================================================================
+# PREVIEW SCREENSHOT GENERATOR - Create preview image of downloaded site
+# =============================================================================
+
+def generate_preview_screenshot(folder_path, main_domain, job_id, index_file=None):
+    """
+    Generate preview screenshot of the main page using Puppeteer
+    
+    Args:
+        folder_path: Path to the downloaded site folder
+        main_domain: Main domain name (e.g., example.com)
+        job_id: Job ID for unique filename
+        index_file: Optional path to index.html (if already found)
+    
+    Returns:
+        Path to generated preview image or None
+    """
+    folder_path = Path(folder_path)
+    
+    # Use provided index_file or search for it
+    if not index_file:
+        # Find index.html in folder or _site/
+        index_paths = [
+            folder_path / 'index.html',
+            folder_path / '_site' / 'index.html',
+            folder_path / main_domain / 'index.html'
+        ]
+        
+        for path in index_paths:
+            if path.exists():
+                index_file = path
+                break
+        
+        # If still not found, use find_index_file
+        if not index_file:
+            index_file = find_index_file(folder_path)
+    
+    if not index_file:
+        print(f"[Preview] index.html not found in {folder_path}")
+        return None
+    
+    try:
+        # Create preview filename
+        preview_filename = f"{main_domain.replace('.', '_')}_{job_id}.png"
+        preview_path = PREVIEWS_DIR / preview_filename
+        
+        # Also save in site folder
+        site_preview_path = folder_path / 'preview.png'
+        
+        # Use Python's Playwright instead of Puppeteer (more reliable)
+        # First try simple approach with subprocess and chromium
+        import shutil
+        
+        # Check if we have chromium/chrome
+        chrome_paths = [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+            shutil.which('chromium'),
+            shutil.which('google-chrome')
+        ]
+        
+        chrome_path = None
+        for p in chrome_paths:
+            if p and Path(p).exists():
+                chrome_path = p
+                break
+        
+        if chrome_path:
+            # Use Chrome headless to screenshot the LIVE site (not local file)
+            site_url = f'https://{main_domain}'
+            
+            result = subprocess.run([
+                chrome_path,
+                '--headless=new',
+                '--disable-gpu',
+                '--no-sandbox',
+                f'--screenshot={preview_path}',
+                '--window-size=1280,800',
+                site_url
+            ], capture_output=True, text=True, timeout=30)
+            
+            if preview_path.exists():
+                # Copy to site folder
+                import shutil as sh
+                sh.copy(preview_path, site_preview_path)
+                print(f"[Preview] Screenshot created with Chrome: {preview_filename}")
+                return preview_path
+        
+        # Fallback: create simple placeholder image
+        print(f"[Preview] Chrome not available, creating placeholder")
+        # Create a simple 1x1 pixel PNG as placeholder
+        placeholder_png = b'\\x89PNG\\r\\n\\x1a\\n\\x00\\x00\\x00\\rIHDR\\x00\\x00\\x00\\x01\\x00\\x00\\x00\\x01\\x08\\x02\\x00\\x00\\x00\\x90wS\\xde\\x00\\x00\\x00\\x0cIDATx\\x9cc\\xf8\\x0f\\x00\\x00\\x01\\x01\\x00\\x05\\x18\\xd8N\\x00\\x00\\x00\\x00IEND\\xaeB`\\x82'
+        preview_path.write_bytes(placeholder_png)
+        site_preview_path.write_bytes(placeholder_png)
+        return preview_path
+            
+    except Exception as e:
+        print(f"[Preview] ❌ Exception: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# =============================================================================
+# SERVER FILES GENERATOR - Create standalone server for each downloaded site
+# =============================================================================
+
+def generate_vue_wrapper(folder_path, main_domain, port=3000, backend_port=3001):
+    """
+    Generate Vue wrapper with iframe for a downloaded site
+    
+    Args:
+        folder_path: Path to the downloaded site folder
+        main_domain: Main domain name (e.g., example.com)
+        port: Port for Vite dev server (default: 3000)
+        backend_port: Port for backend server serving static files (default: 3001)
+    """
+    folder_path = Path(folder_path)
+    if not folder_path.exists():
+        print(f"[Vue Generator] Folder not found: {folder_path}")
+        return False
+    
+    template_dir = Path(__file__).parent / 'templates' / 'vue_wrapper'
+    if not template_dir.exists():
+        print(f"[Vue Generator] Vue wrapper templates not found")
+        return False
+    
+    try:
+        # Create vue-app directory
+        vue_dir = folder_path / 'vue-app'
+        vue_dir.mkdir(exist_ok=True)
+        
+        # Create src directory
+        src_dir = vue_dir / 'src'
+        src_dir.mkdir(exist_ok=True)
+        
+        # Move original files to _site
+        site_dir = folder_path / '_site'
+        if not site_dir.exists():
+            site_dir.mkdir(exist_ok=True)
+            # Move all files except vue-app and _site to _site
+            for item in folder_path.iterdir():
+                if item.name not in ['vue-app', '_site', '_wcloner', 'server.js', 'package.json', 'README.md']:
+                    target = site_dir / item.name
+                    if not target.exists():
+                        shutil.move(str(item), str(target))
+        
+        package_name = main_domain.replace('.', '-')
+        
+        # Copy and process templates
+        replacements = {
+            '{{MAIN_DOMAIN}}': main_domain,
+            '{{PACKAGE_NAME}}': package_name,
+            '{{PORT}}': str(port),
+            '{{BACKEND_PORT}}': str(backend_port)
+        }
+        
+        # index.html
+        with open(template_dir / 'index.html', 'r', encoding='utf-8') as f:
+            content = f.read()
+        for key, val in replacements.items():
+            content = content.replace(key, val)
+        with open(vue_dir / 'index.html', 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        # App.vue
+        shutil.copy(template_dir / 'App.vue', src_dir / 'App.vue')
+        
+        # main.js
+        shutil.copy(template_dir / 'main.js', src_dir / 'main.js')
+        
+        # package.json
+        with open(template_dir / 'package.json', 'r', encoding='utf-8') as f:
+            content = f.read()
+        for key, val in replacements.items():
+            content = content.replace(key, val)
+        with open(vue_dir / 'package.json', 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        # vite.config.js
+        with open(template_dir / 'vite.config.js', 'r', encoding='utf-8') as f:
+            content = f.read()
+        for key, val in replacements.items():
+            content = content.replace(key, val)
+        with open(vue_dir / 'vite.config.js', 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        # Backend server.js
+        with open(template_dir / 'server.js', 'r', encoding='utf-8') as f:
+            content = f.read()
+        for key, val in replacements.items():
+            content = content.replace(key, val)
+        backend_server = folder_path / 'backend-server.js'
+        with open(backend_server, 'w', encoding='utf-8') as f:
+            f.write(content)
+        os.chmod(backend_server, 0o755)
+        
+        # Create README
+        readme_content = f"""# {main_domain} - Vue Wrapper
+
+Этот сайт был скачан с помощью WCLoner и обёрнут в Vue.js приложение.
+
+## Структура
+
+```
+{folder_path.name}/
+├── vue-app/           ← Vue приложение (обёртка)
+│   ├── src/
+│   │   ├── App.vue
+│   │   └── main.js
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.js
+├── _site/             ← Скачанный контент
+│   ├── index.html
+│   ├── css/
+│   └── js/
+└── backend-server.js  ← Сервер для статики
+```
+
+## Быстрый старт
+
+### 1. Установка зависимостей
+
+```bash
+cd vue-app
+npm install
+```
+
+### 2. Запуск
+
+Откройте **два терминала**:
+
+**Терминал 1** - Backend сервер (статика):
+```bash
+node backend-server.js
+```
+
+**Терминал 2** - Vue dev сервер:
+```bash
+cd vue-app
+npm run dev
+```
+
+Откройте: http://localhost:{port}
+
+## Возможности
+
+- ✅ Vue.js обёртка с iframe
+- ✅ SEO оптимизация (meta tags, structured data)
+- ✅ Синхронизация URL между iframe и родителем
+- ✅ Извлечение контента для поисковиков
+- ✅ Hot Module Replacement (HMR)
+- ✅ Готово к продакшену (npm run build)
+
+## Production Build
+
+```bash
+cd vue-app
+npm run build
+```
+
+Результат в `vue-app/dist/`
+
+---
+Создано WCLoner
+"""
+        
+        readme_file = folder_path / 'README-VUE.md'
+        with open(readme_file, 'w', encoding='utf-8') as f:
+            f.write(readme_content)
+        
+        print(f"[Vue Generator] ✅ Generated Vue wrapper for {main_domain}")
+        print(f"  - vue-app/index.html")
+        print(f"  - vue-app/src/App.vue")
+        print(f"  - vue-app/src/main.js")
+        print(f"  - vue-app/package.json")
+        print(f"  - vue-app/vite.config.js")
+        print(f"  - backend-server.js")
+        print(f"  - README-VUE.md")
+        print(f"  - Moved content to _site/")
+        
+        return True
+        
+    except Exception as e:
+        print(f"[Vue Generator] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def generate_server_files(folder_path, main_domain, port=3000, with_vue=False):
+    """
+    Generate server.js, platform-integration.js, and package.json for a downloaded site
+    
+    Args:
+        folder_path: Path to the downloaded site folder (e.g., /downloads/example.com)
+        main_domain: Main domain name (e.g., example.com)
+        port: Port number for the server (default: 3000)
+        with_vue: Generate Vue wrapper instead of simple server (default: False)
+    """
+    if with_vue:
+        return generate_vue_wrapper(folder_path, main_domain, port, port + 1)
+    folder_path = Path(folder_path)
+    if not folder_path.exists():
+        print(f"[Server Generator] Folder not found: {folder_path}")
+        return False
+    
+    # Extract domain info
+    local_domain = main_domain.replace('.com', '.local').replace('.net', '.local').replace('.org', '.local')
+    
+    # Find all subdomains in the folder
+    subdomains = []
+    try:
+        for item in folder_path.parent.iterdir():
+            if item.is_dir() and '.' in item.name and main_domain in item.name:
+                subdomains.append(item.name)
+    except Exception as e:
+        print(f"[Server Generator] Error scanning subdomains: {e}")
+    
+    # Read templates
+    template_dir = Path(__file__).parent / 'templates'
+    server_template_path = template_dir / 'server_template.js'
+    platform_template_path = template_dir / 'platform_integration_template.js'
+    
+    if not server_template_path.exists() or not platform_template_path.exists():
+        print(f"[Server Generator] Templates not found in {template_dir}")
+        return False
+    
+    try:
+        # Read server template
+        with open(server_template_path, 'r', encoding='utf-8') as f:
+            server_content = f.read()
+        
+        # Replace placeholders in server.js
+        server_content = server_content.replace('{{PORT}}', str(port))
+        server_content = server_content.replace('{{MAIN_DOMAIN}}', main_domain)
+        server_content = server_content.replace('{{LOCAL_DOMAIN}}', local_domain)
+        server_content = server_content.replace('{{SUBDOMAINS_JSON}}', json.dumps(subdomains))
+        
+        # Read platform integration template
+        with open(platform_template_path, 'r', encoding='utf-8') as f:
+            platform_content = f.read()
+        
+        # Replace placeholders in platform-integration.js
+        platform_content = platform_content.replace('{{MAIN_DOMAIN}}', main_domain)
+        platform_content = platform_content.replace('{{LOCAL_DOMAIN}}', local_domain)
+        platform_content = platform_content.replace('{{SUBDOMAINS_JSON}}', json.dumps(subdomains))
+        
+        # Create _wcloner directory
+        wcloner_dir = folder_path / '_wcloner'
+        wcloner_dir.mkdir(exist_ok=True)
+        
+        # Write server.js to main folder
+        server_file = folder_path / 'server.js'
+        with open(server_file, 'w', encoding='utf-8') as f:
+            f.write(server_content)
+        os.chmod(server_file, 0o755)  # Make executable
+        
+        # Write platform-integration.js to _wcloner
+        platform_file = wcloner_dir / 'platform-integration.js'
+        with open(platform_file, 'w', encoding='utf-8') as f:
+            f.write(platform_content)
+        
+        # Create package.json
+        package_json = {
+            "name": main_domain.replace('.', '-'),
+            "version": "1.0.0",
+            "description": f"WCLoner standalone server for {main_domain}",
+            "main": "server.js",
+            "scripts": {
+                "start": "node server.js",
+                "dev": f"PORT={port} node server.js"
+            },
+            "keywords": ["wcloner", "static-server"],
+            "author": "WCLoner",
+            "license": "MIT"
+        }
+        
+        package_file = folder_path / 'package.json'
+        with open(package_file, 'w', encoding='utf-8') as f:
+            json.dump(package_json, f, indent=2)
+        
+        # Create README.md
+        readme_content = f"""# {main_domain} - WCLoner Standalone Server
+
+Этот сайт был скачан с помощью WCLoner и готов к запуску.
+
+## Быстрый старт
+
+```bash
+# Запустить сервер
+node server.js
+
+# Или с npm
+npm start
+```
+
+Сервер запустится на порту {port}.
+
+## Доступ к сайту
+
+- Главный домен: http://localhost:{port}
+- Локальный домен: http://{local_domain}:{port}
+
+## Поддомены
+
+{chr(10).join(f'- http://{sub.replace(main_domain, local_domain)}:{port}' for sub in subdomains[:5])}
+{f'... и ещё {len(subdomains) - 5} поддоменов' if len(subdomains) > 5 else ''}
+
+## Настройка hosts (опционально)
+
+Добавьте в `/etc/hosts` (macOS/Linux) или `C:\\Windows\\System32\\drivers\\etc\\hosts` (Windows):
+
+```
+127.0.0.1 {local_domain}
+{chr(10).join(f'127.0.0.1 {sub.replace(main_domain, local_domain)}' for sub in subdomains[:10])}
+```
+
+## Возможности
+
+- ✅ Автоматическая маршрутизация по поддоменам
+- ✅ Переписывание URL в HTML
+- ✅ Клиентская навигация между страницами
+- ✅ Блокировка внешних трекеров
+- ✅ Gzip сжатие
+- ✅ CORS поддержка
+
+---
+Создано WCLoner
+"""
+        
+        readme_file = folder_path / 'README.md'
+        with open(readme_file, 'w', encoding='utf-8') as f:
+            f.write(readme_content)
+        
+        print(f"[Server Generator] ✅ Generated server files for {main_domain}")
+        print(f"  - server.js")
+        print(f"  - _wcloner/platform-integration.js")
+        print(f"  - package.json")
+        print(f"  - README.md")
+        print(f"  - Found {len(subdomains)} subdomains")
+        
+        return True
+        
+    except Exception as e:
+        print(f"[Server Generator] ❌ Error generating files: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 # =============================================================================
@@ -229,6 +1274,7 @@ class WgetJob:
         self.started_at = None
         self.finished_at = None
         self.stop_requested = False  # Flag to stop Smart mode loop
+        self.preview_image = None  # Path to preview screenshot
         # Use folder_name if provided, otherwise fall back to job_id
         self.folder_name = folder_name or job_id
         self.output_dir = DOWNLOADS_DIR / self.folder_name
@@ -248,7 +1294,8 @@ class WgetJob:
             'finished_at': self.finished_at.isoformat() if self.finished_at else None,
             'output_dir': str(self.output_dir),
             'use_wget2': self.use_wget2,
-            'engine': self.engine
+            'engine': self.engine,
+            'preview_image': self.preview_image
         }
 
 
@@ -668,6 +1715,60 @@ def run_wget_job(job_id):
         job.finished_at = datetime.now()
         update_job_stats(job)
         
+        # Auto-generate preview screenshot
+        if job.status == 'completed':
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(job.url)
+                main_domain = parsed.netloc.replace('www.', '')
+                
+                job.output_lines.append("")
+                job.output_lines.append("[WCLoner] Создание preview screenshot...")
+                
+                preview_path = generate_preview_screenshot(
+                    folder_path=job.output_dir,
+                    main_domain=main_domain,
+                    job_id=job.id
+                )
+                
+                if preview_path:
+                    job.output_lines.append(f"[WCLoner] ✅ Preview создан: {preview_path.name}")
+                    # Сохраняем путь к preview в job
+                    job.preview_image = f"/static/previews/{preview_path.name}"
+                else:
+                    job.output_lines.append("[WCLoner] ⚠️ Preview не создан")
+            except Exception as e:
+                job.output_lines.append(f"[WCLoner] ❌ Ошибка preview: {str(e)}")
+        
+        # Auto-generate Vue wrapper if requested
+        if job.status == 'completed' and job.options.get('with_vue_wrapper', False):
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(job.url)
+                main_domain = parsed.netloc.replace('www.', '')
+                
+                job.output_lines.append("")
+                job.output_lines.append("[WCLoner] Генерация Vue-обёртки...")
+                
+                success = generate_vue_wrapper(
+                    folder_path=job.output_dir,
+                    main_domain=main_domain,
+                    port=3000,
+                    backend_port=3001
+                )
+                
+                if success:
+                    job.output_lines.append("[WCLoner] ✅ Vue-обёртка создана!")
+                    job.output_lines.append(f"[WCLoner] Запуск:")
+                    job.output_lines.append(f"[WCLoner]   1. cd {job.output_dir}/vue-app")
+                    job.output_lines.append(f"[WCLoner]   2. npm install")
+                    job.output_lines.append(f"[WCLoner]   3. node ../backend-server.js (терминал 1)")
+                    job.output_lines.append(f"[WCLoner]   4. npm run dev (терминал 2)")
+                else:
+                    job.output_lines.append("[WCLoner] ⚠️ Ошибка генерации Vue-обёртки")
+            except Exception as e:
+                job.output_lines.append(f"[WCLoner] ❌ Ошибка генерации: {str(e)}")
+        
     except Exception as e:
         job.status = 'failed'
         job.output_lines.append(f"Error: {str(e)}")
@@ -775,6 +1876,11 @@ def normalize_url(url):
 
 @app.route('/')
 def index():
+    return render_template('landings.html', downloads_dir=str(DOWNLOADS_DIR))
+
+
+@app.route('/old')
+def old_index():
     return render_template('index.html', downloads_dir=str(DOWNLOADS_DIR))
 
 
@@ -1105,6 +2211,74 @@ def list_downloads():
     return jsonify(downloads)
 
 
+@app.route('/api/file-tree/<folder_name>')
+def get_file_tree(folder_name):
+    """Get full file tree for a downloaded site folder with stats"""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        return jsonify({'error': 'Folder not found'}), 404
+    
+    # Collect all files
+    files = []
+    stats = {'html': 0, 'css': 0, 'js': 0, 'images': 0, 'other': 0, 'total_files': 0, 'total_size': 0}
+    image_exts = {'.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.ico', '.bmp'}
+    
+    for f in folder_path.rglob('*'):
+        if not f.is_file():
+            continue
+        if '_wcloner' in str(f):
+            continue
+        
+        rel_path = str(f.relative_to(folder_path))
+        size = f.stat().st_size
+        ext = f.suffix.lower()
+        mtime = datetime.fromtimestamp(f.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+        
+        # Determine file type
+        if ext in ('.html', '.htm'):
+            ftype = 'html'
+        elif ext in ('.css',):
+            ftype = 'css'
+        elif ext in ('.js', '.mjs'):
+            ftype = 'js'
+        elif ext in image_exts:
+            ftype = 'image'
+        else:
+            ftype = 'other'
+        
+        # Count stats
+        if ftype == 'html':
+            stats['html'] += 1
+        elif ftype == 'css':
+            stats['css'] += 1
+        elif ftype == 'js':
+            stats['js'] += 1
+        elif ftype == 'image':
+            stats['images'] += 1
+        else:
+            stats['other'] += 1
+        stats['total_files'] += 1
+        stats['total_size'] += size
+        
+        files.append({
+            'path': rel_path,
+            'name': f.name,
+            'size': format_size(size),
+            'size_bytes': size,
+            'date': mtime,
+            'type': ftype,
+            'ext': ext
+        })
+    
+    stats['total_size_formatted'] = format_size(stats['total_size'])
+    
+    return jsonify({
+        'folder_name': folder_name,
+        'files': files,
+        'stats': stats
+    })
+
+
 @app.route('/api/browse/<path:filepath>')
 def browse_download(filepath):
     """Serve files from downloads directory for built-in viewer"""
@@ -1218,8 +2392,9 @@ def find_index_html_api(folder_name):
     
     index_file = find_index_file(folder_path)
     if index_file:
-        rel_path = index_file.relative_to(DOWNLOADS_DIR)
-        return jsonify({'path': str(rel_path)})
+        # Return path relative to folder_path, not DOWNLOADS_DIR
+        rel_path = index_file.relative_to(folder_path)
+        return jsonify({'index_path': str(rel_path)})
     
     return jsonify({'error': 'No HTML files found'}), 404
 
@@ -1400,6 +2575,567 @@ def scan_site():
     })
 
 
+# =============================================================================
+# LANDING MANAGER - Page and API
+# =============================================================================
+
+LANDINGS_CONFIG_FILE = BASE_DIR / 'admin' / 'landings.json'
+
+
+def load_landings_config():
+    """Load individual landing settings"""
+    if not LANDINGS_CONFIG_FILE.exists():
+        return {}
+    try:
+        with open(LANDINGS_CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+def save_landings_config(config):
+    """Save individual landing settings"""
+    try:
+        with open(LANDINGS_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+    except Exception as e:
+        print(f"Error saving landings config: {e}")
+
+
+@app.route('/landings')
+def landings_page():
+    return render_template('landings.html', downloads_dir=str(DOWNLOADS_DIR))
+
+
+@app.route('/index')
+def index_page():
+    return render_template('index.html', downloads_dir=str(DOWNLOADS_DIR))
+
+
+@app.route('/api/landings')
+def get_landings():
+    """Get all downloads grouped by parent domain -> subdomains"""
+    import re
+    
+    landings_config = load_landings_config()
+    
+    # Active folders
+    active_folders = set()
+    for job in jobs.values():
+        if job.status in ('running', 'pending', 'paused'):
+            active_folders.add(job.folder_name)
+    
+    # Collect all downloaded folders
+    domains_map = {}  # parent_domain -> {subdomains, pages, settings}
+    
+    for item in DOWNLOADS_DIR.iterdir():
+        if not item.is_dir():
+            continue
+        
+        folder_name = item.name
+        
+        # Parse folder name: domain_engine or just domain
+        parts = folder_name.rsplit('_', 1)
+        engine = parts[1] if len(parts) > 1 and parts[1] in ('wget2', 'httrack', 'puppeteer', 'smart') else 'unknown'
+        domain_part = parts[0] if engine != 'unknown' else folder_name
+        
+        # Extract parent domain (last 2 parts: example.com)
+        domain_parts = domain_part.split('.')
+        if len(domain_parts) >= 2:
+            parent_domain = '.'.join(domain_parts[-2:])
+        else:
+            parent_domain = domain_part
+        
+        # Calc stats
+        all_files = list(item.rglob('*'))
+        file_count = sum(1 for f in all_files if f.is_file())
+        total_size = sum(f.stat().st_size for f in all_files if f.is_file())
+        mtime = datetime.fromtimestamp(item.stat().st_mtime)
+        
+        # Collect HTML pages at folder root level (not inside subdomain dirs)
+        root_pages = []
+        for html_file in item.rglob('*.html'):
+            rel_path = str(html_file.relative_to(item))
+            root_pages.append({
+                'name': html_file.name,
+                'path': rel_path,
+                'full_path': str(html_file),
+                'size': format_size(html_file.stat().st_size),
+                'size_bytes': html_file.stat().st_size,
+                'date': datetime.fromtimestamp(html_file.stat().st_mtime).strftime('%Y-%m-%d %H:%M'),
+                'subdomain': rel_path.split(os.sep)[0] if os.sep in rel_path else ''
+            })
+        
+        # Find subdomains inside the folder
+        subdomains = []
+        for sub in item.iterdir():
+            if sub.is_dir() and '.' in sub.name and sub.name not in ('hts-cache', '_next', 'static', 'assets', 'images', 'css', 'js', 'fonts'):
+                sub_files = list(sub.rglob('*'))
+                sub_file_count = sum(1 for f in sub_files if f.is_file())
+                sub_size = sum(f.stat().st_size for f in sub_files if f.is_file())
+                sub_mtime = datetime.fromtimestamp(sub.stat().st_mtime)
+                
+                # Find HTML pages in subdomain
+                html_pages = []
+                for html_file in sub.rglob('*.html'):
+                    rel_path = str(html_file.relative_to(item))
+                    html_pages.append({
+                        'name': html_file.name,
+                        'path': rel_path,
+                        'size': format_size(html_file.stat().st_size),
+                        'date': datetime.fromtimestamp(html_file.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+                    })
+                
+                # Individual settings for this subdomain
+                config_key = f"{folder_name}/{sub.name}"
+                sub_config = landings_config.get(config_key, {})
+                
+                subdomains.append({
+                    'name': sub.name,
+                    'files': sub_file_count,
+                    'size': format_size(sub_size),
+                    'date': sub_mtime.strftime('%Y-%m-%d %H:%M'),
+                    'pages': html_pages,
+                    'config': sub_config,
+                    'config_key': config_key
+                })
+        
+        subdomains.sort(key=lambda x: x['name'])
+        
+        is_active = folder_name in active_folders
+        
+        # Find related job
+        related_job = None
+        for job in jobs.values():
+            if job.folder_name == folder_name:
+                related_job = {
+                    'id': job.id,
+                    'status': job.status,
+                    'engine': job.engine,
+                    'url': job.url
+                }
+                break
+        
+        # Individual config for this folder
+        folder_config = landings_config.get(folder_name, {})
+        
+        # Group under parent domain
+        if parent_domain not in domains_map:
+            domains_map[parent_domain] = {
+                'parent_domain': parent_domain,
+                'folders': [],
+                'total_files': 0,
+                'total_size': 0,
+            }
+        
+        domains_map[parent_domain]['folders'].append({
+            'folder_name': folder_name,
+            'domain': domain_part,
+            'engine': engine,
+            'path': str(item),
+            'files': file_count,
+            'size': format_size(total_size),
+            'size_bytes': total_size,
+            'date': mtime.strftime('%Y-%m-%d %H:%M'),
+            'is_active': is_active,
+            'subdomains': subdomains,
+            'pages': root_pages,
+            'job': related_job,
+            'config': folder_config
+        })
+        domains_map[parent_domain]['total_files'] += file_count
+        domains_map[parent_domain]['total_size'] += total_size
+    
+    # Format and sort
+    result = []
+    for pd, data in domains_map.items():
+        data['total_size_formatted'] = format_size(data['total_size'])
+        data['folders'].sort(key=lambda x: x['date'], reverse=True)
+        result.append(data)
+    
+    result.sort(key=lambda x: x['parent_domain'])
+    return jsonify(result)
+
+
+@app.route('/api/landings/config', methods=['POST'])
+def save_landing_config():
+    """Save individual settings for a landing/subdomain"""
+    data = request.json
+    config_key = data.get('config_key', '')
+    settings = data.get('settings', {})
+    
+    if not config_key:
+        return jsonify({'error': 'config_key is required'}), 400
+    
+    landings_config = load_landings_config()
+    landings_config[config_key] = settings
+    save_landings_config(landings_config)
+    
+    return jsonify({'success': True, 'config_key': config_key})
+
+
+@app.route('/api/check-changes/<folder_name>', methods=['GET'])
+def check_changes_endpoint(folder_name):
+    """Quick check if site has changes. Supports ?subdomain=X and ?page=path/to/file.html"""
+    folder_path = DOWNLOADS_DIR / folder_name
+    
+    if not folder_path.exists():
+        return jsonify({'error': 'Folder not found'}), 404
+    
+    subdomain = request.args.get('subdomain', '').strip()
+    page_path = request.args.get('page', '').strip()
+    
+    # Пытаемся найти URL из конфига или job
+    url = None
+    
+    # Проверяем активные jobs
+    for job in jobs.values():
+        if job.folder_name == folder_name:
+            url = job.url
+            break
+    
+    # Если не нашли в jobs, ищем в конфиге
+    if not url:
+        config_path = folder_path / '_wcloner' / 'config.json'
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+                    url = config_data.get('original_url')
+            except Exception:
+                pass
+    
+    # Если не нашли в jobs, пытаемся определить из имени папки
+    if not url:
+        url = f"https://{folder_name}"
+    
+    # Проверка конкретной страницы
+    if page_path:
+        result = check_page_changes(folder_path, url, page_path)
+        return jsonify(result)
+    
+    # Проверка поддомена
+    if subdomain:
+        sub_url = f"https://{subdomain}"
+        sub_folder = folder_path / subdomain
+        if sub_folder.exists():
+            result = check_site_changes(sub_folder, sub_url)
+            result['subdomain'] = subdomain
+            return jsonify(result)
+        else:
+            return jsonify({'error': f'Subdomain folder not found: {subdomain}', 'has_changes': False})
+    
+    result = check_site_changes(folder_path, url)
+    return jsonify(result)
+
+
+@app.route('/api/check-all-changes/<folder_name>', methods=['GET'])
+def check_all_changes_endpoint(folder_name):
+    """Check all HTML pages for changes compared to online versions"""
+    folder_path = DOWNLOADS_DIR / folder_name
+    
+    if not folder_path.exists():
+        return jsonify({'error': 'Folder not found'}), 404
+    
+    max_pages = request.args.get('max', 50, type=int)
+    
+    # Get base URL
+    url = None
+    for job in jobs.values():
+        if job.folder_name == folder_name:
+            url = job.url
+            break
+    
+    if not url:
+        config_path = folder_path / '_wcloner' / 'config.json'
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+                    url = config_data.get('original_url')
+            except:
+                pass
+    
+    if not url:
+        url = f"https://{folder_name}"
+    
+    result = check_all_pages_changes(folder_path, url, max_pages)
+    result['folder_name'] = folder_name
+    result['base_url'] = url
+    return jsonify(result)
+
+
+@app.route('/api/check-integrity/<folder_name>', methods=['GET'])
+def check_integrity_endpoint(folder_name):
+    """Check site integrity - find missing referenced resources"""
+    folder_path = DOWNLOADS_DIR / folder_name
+    
+    if not folder_path.exists():
+        return jsonify({'error': 'Folder not found'}), 404
+    
+    result = check_site_integrity(folder_path)
+    result['folder_name'] = folder_name
+    return jsonify(result)
+
+
+@app.route('/api/download-missing/<folder_name>', methods=['POST'])
+def download_missing_endpoint(folder_name):
+    """Download missing files for a site"""
+    folder_path = DOWNLOADS_DIR / folder_name
+    
+    if not folder_path.exists():
+        return jsonify({'error': 'Folder not found'}), 404
+    
+    data = request.json or {}
+    missing_paths = data.get('paths', [])
+    
+    if not missing_paths:
+        return jsonify({'error': 'No paths provided'}), 400
+    
+    # Determine base URL
+    url = None
+    for job in jobs.values():
+        if job.folder_name == folder_name:
+            url = job.url
+            break
+    
+    if not url:
+        config_path = folder_path / '_wcloner' / 'config.json'
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+                    url = config_data.get('original_url')
+            except Exception:
+                pass
+    
+    if not url:
+        url = f"https://{folder_name}"
+    
+    result = download_missing_files(folder_path, url, missing_paths)
+    return jsonify(result)
+
+
+@app.route('/api/thumbnail/<folder_name>')
+def get_thumbnail(folder_name):
+    """Get thumbnail/preview image for a site"""
+    folder_path = DOWNLOADS_DIR / folder_name
+    
+    if not folder_path.exists():
+        return jsonify({'error': 'Folder not found'}), 404
+    
+    # Check for preview in site folder
+    preview_path = folder_path / 'preview.png'
+    if preview_path.exists():
+        return send_file(preview_path, mimetype='image/png')
+    
+    # Check in previews directory
+    preview_in_dir = PREVIEWS_DIR / f"{folder_name}.png"
+    if preview_in_dir.exists():
+        return send_file(preview_in_dir, mimetype='image/png')
+    
+    # Return 404 if no preview
+    return jsonify({'error': 'No preview available'}), 404
+
+
+@app.route('/api/screenshot/<folder_name>', methods=['POST'])
+def create_screenshot(folder_name):
+    """Create screenshot for a downloaded site"""
+    folder_path = DOWNLOADS_DIR / folder_name
+    
+    if not folder_path.exists():
+        return jsonify({'error': 'Folder not found'}), 404
+    
+    try:
+        # Find index.html
+        index_file = find_index_file(folder_path)
+        if not index_file:
+            return jsonify({'error': 'No index.html found'}), 404
+        
+        # Get domain from folder name
+        main_domain = folder_name.split('_')[0] if '_' in folder_name else folder_name
+        
+        preview_path = generate_preview_screenshot(
+            folder_path=folder_path,
+            main_domain=main_domain,
+            job_id=folder_name,
+            index_file=index_file
+        )
+        
+        if preview_path and preview_path.exists():
+            return jsonify({'success': True, 'path': str(preview_path)})
+        else:
+            return jsonify({'error': 'Failed to generate screenshot'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/landings/analyze', methods=['POST'])
+def analyze_changes():
+    """Compare original site with our downloaded copy"""
+    import requests as req
+    from bs4 import BeautifulSoup
+    import hashlib
+    
+    data = request.json
+    url = data.get('url', '').strip()
+    folder_path = data.get('folder_path', '').strip()
+    subdomain = data.get('subdomain', '').strip()
+    
+    if not url or not folder_path:
+        return jsonify({'error': 'url and folder_path required'}), 400
+    
+    local_dir = Path(folder_path)
+    if subdomain:
+        local_dir = local_dir / subdomain
+    
+    if not local_dir.exists():
+        return jsonify({'error': 'Local folder not found'}), 404
+    
+    changes = {
+        'modified': [],
+        'new_on_remote': [],
+        'only_local': [],
+        'unchanged': [],
+        'errors': []
+    }
+    
+    # Find all local HTML files
+    local_html = {}
+    for html_file in local_dir.rglob('*.html'):
+        rel = str(html_file.relative_to(local_dir))
+        with open(html_file, 'r', errors='ignore') as f:
+            content = f.read()
+        local_html[rel] = {
+            'path': rel,
+            'size': html_file.stat().st_size,
+            'hash': hashlib.md5(content.encode()).hexdigest(),
+            'date': datetime.fromtimestamp(html_file.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+        }
+    
+    # Fetch remote pages and compare
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    }
+    
+    # Check main page
+    try:
+        resp = req.get(url, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            remote_hash = hashlib.md5(resp.text.encode()).hexdigest()
+            remote_size = len(resp.text)
+            
+            # Find matching local file
+            matched = False
+            for rel_path, local_info in local_html.items():
+                if 'index' in rel_path.lower():
+                    matched = True
+                    if local_info['hash'] != remote_hash:
+                        changes['modified'].append({
+                            'page': url,
+                            'local_path': rel_path,
+                            'local_size': format_size(local_info['size']),
+                            'remote_size': format_size(remote_size),
+                            'local_date': local_info['date']
+                        })
+                    else:
+                        changes['unchanged'].append({
+                            'page': url,
+                            'local_path': rel_path
+                        })
+                    break
+            
+            if not matched:
+                changes['new_on_remote'].append({
+                    'page': url,
+                    'size': format_size(remote_size)
+                })
+            
+            # Parse links from remote page
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            parsed_url = urlparse(url)
+            base = f"{parsed_url.scheme}://{parsed_url.netloc}"
+            
+            for link in soup.find_all('a', href=True):
+                href = link['href']
+                if href.startswith('/') and not href.startswith('//'):
+                    full_url = base + href
+                    # Check if we have this page locally
+                    possible_local = href.strip('/').replace('/', os.sep)
+                    if possible_local and not any(possible_local in lp for lp in local_html):
+                        changes['new_on_remote'].append({
+                            'page': full_url,
+                            'size': 'unknown'
+                        })
+    except Exception as e:
+        changes['errors'].append(f"Error fetching {url}: {str(e)}")
+    
+    # Pages only in local
+    for rel_path, info in local_html.items():
+        found_in_changes = False
+        for c in changes['modified'] + changes['unchanged']:
+            if c.get('local_path') == rel_path:
+                found_in_changes = True
+                break
+        if not found_in_changes:
+            changes['only_local'].append({
+                'local_path': rel_path,
+                'size': format_size(info['size']),
+                'date': info['date']
+            })
+    
+    summary = {
+        'modified': len(changes['modified']),
+        'new_on_remote': len(changes['new_on_remote']),
+        'only_local': len(changes['only_local']),
+        'unchanged': len(changes['unchanged']),
+        'errors': len(changes['errors'])
+    }
+    
+    return jsonify({'changes': changes, 'summary': summary})
+
+
+@app.route('/api/landings/redownload', methods=['POST'])
+def redownload_landing():
+    """Re-download a specific page or subdomain with individual settings"""
+    data = request.json
+    url = data.get('url', '').strip()
+    folder_name = data.get('folder_name', '').strip()
+    config_key = data.get('config_key', '')
+    
+    if not url or not folder_name:
+        return jsonify({'error': 'url and folder_name required'}), 400
+    
+    # Load individual settings
+    landings_config = load_landings_config()
+    settings = landings_config.get(config_key, {})
+    
+    # Merge with defaults
+    options = {
+        'recursive': True,
+        'depth': settings.get('depth', 2),
+        'page_requisites': True,
+        'convert_links': True,
+        'no_parent': True,
+        'wait': settings.get('wait', 0.5),
+        'include_subdomains': settings.get('include_subdomains', True),
+        'extra_domains': settings.get('extra_domains', ''),
+        'user_agent': settings.get('user_agent', ''),
+        'continue_download': True
+    }
+    
+    engine = settings.get('engine', 'wget2')
+    
+    job_id = str(uuid.uuid4())[:8]
+    job = WgetJob(job_id, url, options, True, folder_name, engine)
+    jobs[job_id] = job
+    save_jobs()
+    
+    start_job_thread(job_id)
+    return jsonify(job.to_dict())
+
+
 @socketio.on('connect')
 def handle_connect():
     emit('connected', {'status': 'ok'})
@@ -1410,4 +3146,4 @@ if __name__ == '__main__':
     print(f"Using wget2: {WGET2_PATH}")
     print(f"Downloads dir: {DOWNLOADS_DIR}")
     load_jobs()  # Load saved jobs on startup
-    socketio.run(app, host='0.0.0.0', port=5050, debug=True)
+    app.run(host='0.0.0.0', port=8888, debug=True)

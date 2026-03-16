@@ -1,0 +1,1180 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Black Rabbit Cloner - Landings Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.0/socket.io.min.js"></script>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        .gradient-bg { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); }
+        .badge { font-size: 10px; padding: 2px 8px; border-radius: 9999px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        .badge-wget2 { background: #dbeafe; color: #1e40af; }
+        .badge-httrack { background: #fef3c7; color: #92400e; }
+        .badge-puppeteer { background: #ede9fe; color: #5b21b6; }
+        .badge-smart { background: #d1fae5; color: #065f46; }
+        .badge-unknown { background: #f3f4f6; color: #374151; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .status-running { background: #22c55e; animation: pulse 1.5s infinite; }
+        .status-completed { background: #3b82f6; }
+        .status-failed { background: #ef4444; }
+        .status-stopped { background: #f59e0b; }
+        @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+        .modal-overlay { background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
+        .config-input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.1); outline: none; }
+        .domain-row { cursor: pointer; }
+        .domain-row:hover { background: #f8fafc; }
+        .sub-row:hover { background: #f1f5f9; }
+        .page-row:hover { background: #f8fafc; }
+        .expand-caret { transition: transform 0.15s; display: inline-block; }
+        .expand-caret.open { transform: rotate(90deg); }
+        .action-btn { padding: 4px 8px; border-radius: 6px; transition: all 0.15s; font-size: 12px; }
+        .action-btn:hover { background: #eef2ff; color: #4f46e5; }
+        table { border-collapse: separate; border-spacing: 0; }
+        thead th { position: sticky; top: 0; z-index: 5; }
+        .log-container { font-family: 'Monaco','Menlo',monospace; font-size: 11px; }
+        .tab-active { border-bottom: 2px solid #6366f1; color: #4f46e5; font-weight: 600; }
+        .tab-inactive { border-bottom: 2px solid transparent; color: #6b7280; }
+        .tab-inactive:hover { color: #374151; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+    <!-- Header -->
+    <header class="gradient-bg text-white shadow-xl">
+        <div class="max-w-full mx-auto px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="bg-indigo-500/20 p-2.5 rounded-xl">
+                        <i class="fas fa-layer-group text-xl text-indigo-300"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-lg font-bold tracking-tight">Менеджер лендингов</h1>
+                        <p class="text-slate-400 text-xs">Управление скачанными сайтами</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-6">
+                    <div class="flex items-center space-x-6 text-sm">
+                        <div class="text-center">
+                            <span class="text-lg font-bold" id="statDomains">0</span>
+                            <span class="text-slate-400 ml-1">доменов</span>
+                        </div>
+                        <div class="text-center">
+                            <span class="text-lg font-bold" id="statFolders">0</span>
+                            <span class="text-slate-400 ml-1">папок</span>
+                        </div>
+                        <div class="text-center">
+                            <span class="text-lg font-bold" id="statFiles">0</span>
+                            <span class="text-slate-400 ml-1">файлов</span>
+                        </div>
+                        <div class="text-center">
+                            <span class="text-lg font-bold text-indigo-300" id="statSize">0 B</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="loadAll()" class="bg-indigo-500/20 hover:bg-indigo-500/30 px-3 py-1.5 rounded-lg text-xs transition">
+                            <i class="fas fa-sync-alt mr-1"></i>Обновить
+                        </button>
+                        <button onclick="openDownloads()" class="bg-slate-700/50 hover:bg-slate-600/50 px-3 py-1.5 rounded-lg text-xs transition" title="{{ downloads_dir }}">
+                            <i class="fas fa-folder-open mr-1"></i>Папка
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- New Job Form -->
+    <div class="px-4 pt-4">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="flex items-center justify-between px-5 py-3 cursor-pointer hover:bg-gray-50/50" onclick="document.getElementById('newJobPanel').classList.toggle('hidden');document.getElementById('njChevron').classList.toggle('rotate-180')">
+                <div class="flex items-center space-x-2">
+                    <i class="fas fa-plus-circle text-indigo-500"></i>
+                    <span class="font-semibold text-gray-800 text-sm">Клонировать сайт</span>
+                </div>
+                <i class="fas fa-chevron-down text-gray-400 text-xs transition-transform" id="njChevron"></i>
+            </div>
+            <div id="newJobPanel" class="hidden border-t border-gray-100 p-5 space-y-4">
+                <!-- URL row -->
+                <div class="flex">
+                    <span class="inline-flex items-center px-3 rounded-l-lg border border-r-0 border-gray-300 bg-gray-50 text-gray-500"><i class="fas fa-globe"></i></span>
+                    <input type="text" id="urlInput" class="flex-1 border border-gray-300 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent" placeholder="https://example.com">
+                    <button onclick="scanSite()" class="px-4 py-2.5 bg-slate-600 text-white hover:bg-slate-700 text-sm transition" title="Сканировать поддомены"><i class="fas fa-search"></i></button>
+                    <button onclick="startCloning()" class="px-5 py-2.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-r-lg text-sm font-medium transition"><i class="fas fa-rocket mr-1"></i>Скачать</button>
+                </div>
+                <div id="selectedDomainsInfo" class="hidden text-sm text-indigo-600"><i class="fas fa-check-circle mr-1"></i><span id="selectedDomainsText"></span></div>
+                <!-- Presets + Engine -->
+                <div class="flex items-center justify-between flex-wrap gap-2">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-gray-500">Пресеты:</span>
+                        <button onclick="applyPreset('quick')" class="px-2.5 py-1 text-xs bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200"><i class="fas fa-bolt mr-1"></i>Быстрый</button>
+                        <button onclick="applyPreset('full')" class="px-2.5 py-1 text-xs bg-green-100 text-green-700 rounded-full hover:bg-green-200"><i class="fas fa-clone mr-1"></i>Полное зеркало</button>
+                        <button onclick="applyPreset('stealth')" class="px-2.5 py-1 text-xs bg-purple-100 text-purple-700 rounded-full hover:bg-purple-200"><i class="fas fa-user-secret mr-1"></i>Скрытный</button>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-gray-500">Движок:</span>
+                        <button onclick="selEng('smart')" data-eng="smart" class="eng-btn px-3 py-1.5 text-xs rounded-lg bg-gradient-to-r from-purple-600 via-blue-600 to-orange-500 text-white font-medium"><i class="fas fa-magic mr-1"></i>Smart</button>
+                        <button onclick="selEng('wget2')" data-eng="wget2" class="eng-btn px-3 py-1.5 text-xs rounded-lg bg-gray-200 text-gray-700 font-medium"><i class="fas fa-bolt mr-1"></i>wget2</button>
+                        <button onclick="selEng('puppeteer')" data-eng="puppeteer" class="eng-btn px-3 py-1.5 text-xs rounded-lg bg-gray-200 text-gray-700 font-medium"><i class="fab fa-chrome mr-1"></i>Puppeteer</button>
+                        <button onclick="selEng('httrack')" data-eng="httrack" class="eng-btn px-3 py-1.5 text-xs rounded-lg bg-gray-200 text-gray-700 font-medium"><i class="fas fa-spider mr-1"></i>HTTrack</button>
+                    </div>
+                </div>
+                <input type="hidden" id="selectedEngine" value="smart">
+                <!-- Engine desc -->
+                <div id="engineDesc" class="text-xs text-gray-500">
+                    <span data-desc="smart"><i class="fas fa-magic text-purple-500 mr-1"></i>Все движки: wget2 + Puppeteer + HTTrack</span>
+                    <span data-desc="wget2" class="hidden"><i class="fas fa-bolt text-green-500 mr-1"></i>HTTP/2, Многопоточность - Быстрые сайты</span>
+                    <span data-desc="puppeteer" class="hidden"><i class="fab fa-chrome text-blue-500 mr-1"></i>JS рендеринг - Динамические сайты (SPA)</span>
+                    <span data-desc="httrack" class="hidden"><i class="fas fa-spider text-orange-500 mr-1"></i>Умная навигация - Сложные сайты</span>
+                </div>
+                <!-- Advanced toggle -->
+                <button onclick="document.getElementById('advOpts').classList.toggle('hidden');document.getElementById('advChev').classList.toggle('rotate-180')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium"><i class="fas fa-cog mr-1"></i>Расширенные настройки <i class="fas fa-chevron-down ml-1 transition-transform" id="advChev"></i></button>
+                <!-- Advanced Options -->
+                <div id="advOpts" class="hidden p-3 bg-gray-50 rounded-lg text-sm space-y-2">
+                    <!-- Основные -->
+                    <div class="grid grid-cols-6 gap-2 items-center">
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optRecursive" checked class="w-3 h-3 rounded mr-1">Рекурсия</label>
+                        <div><label class="block text-xs text-gray-500">Глубина</label><input type="number" id="optDepth" value="3" min="1" max="10" class="w-full border rounded px-1.5 py-1 text-xs"></div>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optPageReq" checked class="w-3 h-3 rounded mr-1">CSS/JS</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optConvertLinks" checked class="w-3 h-3 rounded mr-1">Конверт.</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optSpanHosts" class="w-3 h-3 rounded mr-1">Др.хосты</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optSubdomains" class="w-3 h-3 rounded mr-1">Поддом.</label>
+                    </div>
+                    <!-- Домены и фильтры -->
+                    <div class="grid grid-cols-3 gap-2">
+                        <div><label class="block text-xs text-gray-500">CDN домены</label><input type="text" id="optExtraDomains" placeholder="cdn.site.com" class="w-full border rounded px-2 py-1 text-xs"></div>
+                        <div><label class="block text-xs text-gray-500">Исключить</label><input type="text" id="optReject" placeholder="*.mp4,*.zip" class="w-full border rounded px-2 py-1 text-xs"></div>
+                        <div><label class="block text-xs text-gray-500">MIME типы</label><input type="text" id="optMimeFilter" placeholder="text/html,text/css" class="w-full border rounded px-2 py-1 text-xs"></div>
+                    </div>
+                    <!-- Скорость и задержки -->
+                    <div class="grid grid-cols-5 gap-2">
+                        <div><label class="block text-xs text-gray-500">Лимит</label><select id="optRateLimit" class="w-full border rounded px-1.5 py-1 text-xs"><option value="">Нет</option><option value="500k">500K</option><option value="1m">1M</option><option value="5m">5M</option></select></div>
+                        <div><label class="block text-xs text-gray-500">Пауза (с)</label><input type="number" id="optWait" value="0.5" min="0" max="10" step="0.1" class="w-full border rounded px-1.5 py-1 text-xs"></div>
+                        <label class="flex items-center text-xs pt-4"><input type="checkbox" id="optRandomWait" class="w-3 h-3 rounded mr-1">Случ.пауза</label>
+                        <div><label class="block text-xs text-gray-500">Пропуск дир.</label><input type="number" id="optCutDirs" value="0" min="0" max="10" class="w-full border rounded px-1.5 py-1 text-xs"></div>
+                        <label class="flex items-center text-xs pt-4"><input type="checkbox" id="optNoParent" checked class="w-3 h-3 rounded mr-1">В каталоге</label>
+                    </div>
+                    <!-- User Agent -->
+                    <div><label class="block text-xs text-gray-500">User Agent</label>
+                        <select id="optUserAgent" class="w-full border rounded px-2 py-1 text-xs">
+                            <option value="">Wget</option>
+                            <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" selected>Chrome Mac</option>
+                            <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36">Chrome Win</option>
+                            <option value="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)">Googlebot</option>
+                        </select>
+                    </div>
+                    <!-- Опции файлов и безопасности -->
+                    <div class="grid grid-cols-6 gap-2">
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optIgnoreRobots" class="w-3 h-3 rounded mr-1">Без robots</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optNoCookies" class="w-3 h-3 rounded mr-1">Без cookies</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optMirror" class="w-3 h-3 rounded mr-1">Зеркало</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optRestrictNames" checked class="w-3 h-3 rounded mr-1">Фикс имён</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optTrustServer" checked class="w-3 h-3 rounded mr-1">Trust srv</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optXattr" checked class="w-3 h-3 rounded mr-1">Метадата</label>
+                    </div>
+                    <!-- Новые wget2 опции -->
+                    <div class="grid grid-cols-5 gap-2">
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optCutUrlVars" checked class="w-3 h-3 rounded mr-1">Убр.GET URL</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optCutFileVars" checked class="w-3 h-3 rounded mr-1">Убр.GET файл</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optKeepExt" checked class="w-3 h-3 rounded mr-1">Сохр.расш.</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optHsts" checked class="w-3 h-3 rounded mr-1">HSTS</label>
+                        <label class="flex items-center text-xs"><input type="checkbox" id="optOcsp" class="w-3 h-3 rounded mr-1">OCSP</label>
+                    </div>
+                    <!-- Компрессия -->
+                    <div><label class="block text-xs text-gray-500">Компрессия</label>
+                        <select id="optCompression" class="w-full border rounded px-2 py-1 text-xs">
+                            <option value="gzip,br,zstd" selected>Все (gzip, brotli, zstd)</option>
+                            <option value="gzip,br">gzip + brotli</option>
+                            <option value="gzip">Только gzip</option>
+                            <option value="">Без сжатия</option>
+                        </select>
+                    </div>
+                    <!-- wget2 opts -->
+                    <div class="border-t border-gray-200 mt-1 pt-2" id="w2Opts">
+                        <div class="text-xs text-gray-500 font-medium mb-1">wget2:</div>
+                        <div class="grid grid-cols-5 gap-2">
+                            <div><label class="block text-xs text-gray-500">Потоки</label><input type="number" id="optThreads" value="15" min="1" max="50" class="w-full border rounded px-1.5 py-1 text-xs"></div>
+                            <div><label class="block text-xs text-gray-500">Chunk</label><select id="optChunk" class="w-full border rounded px-1.5 py-1 text-xs"><option value="">Выкл</option><option value="5M" selected>5M</option><option value="10M">10M</option><option value="20M">20M</option></select></div>
+                            <div><label class="block text-xs text-gray-500">HTTP/2</label><input type="number" id="optH2Win" value="50" min="1" max="100" class="w-full border rounded px-1.5 py-1 text-xs"></div>
+                            <label class="flex items-center text-xs pt-4"><input type="checkbox" id="optProgress" checked class="w-3 h-3 rounded mr-1">Прогресс</label>
+                            <label class="flex items-center text-xs pt-4"><input type="checkbox" id="optMetalink" checked class="w-3 h-3 rounded mr-1">Metalink</label>
+                        </div>
+                    </div>
+                    <!-- puppeteer opts -->
+                    <div class="border-t border-gray-200 mt-1 pt-2 hidden" id="pupOpts">
+                        <div class="text-xs text-gray-500 font-medium mb-1">Puppeteer:</div>
+                        <div class="grid grid-cols-4 gap-2">
+                            <div><label class="block text-xs text-gray-500">Макс. страниц</label><input type="number" id="optMaxPages" value="200" min="1" max="1000" class="w-full border rounded px-1.5 py-1 text-xs"></div>
+                            <div><label class="block text-xs text-gray-500">JS wait (мс)</label><input type="number" id="optJsWait" value="3000" min="500" max="10000" class="w-full border rounded px-1.5 py-1 text-xs"></div>
+                            <label class="flex items-center text-xs pt-4"><input type="checkbox" id="optJsScroll" checked class="w-3 h-3 rounded mr-1">Прокрутка</label>
+                            <label class="flex items-center text-xs pt-4"><input type="checkbox" id="optJsClick" checked class="w-3 h-3 rounded mr-1">Клик "Ещё"</label>
+                        </div>
+                    </div>
+                    <!-- httrack opts -->
+                    <div class="border-t border-gray-200 mt-1 pt-2 hidden" id="htOpts">
+                        <div class="text-xs text-gray-500 font-medium mb-1">HTTrack:</div>
+                        <div class="grid grid-cols-3 gap-2">
+                            <label class="flex items-center text-xs"><input type="checkbox" id="optHtContinue" class="w-3 h-3 rounded mr-1">Продолжить</label>
+                            <label class="flex items-center text-xs"><input type="checkbox" id="optHtExternal" class="w-3 h-3 rounded mr-1">Внешние</label>
+                            <label class="flex items-center text-xs"><input type="checkbox" id="optHtNearLinks" checked class="w-3 h-3 rounded mr-1">Близкие</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Downloads -->
+    <div id="activeSection" class="px-4 pt-3 hidden">
+        <div class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-sm p-4">
+            <h3 class="text-white font-semibold text-sm mb-3 flex items-center">
+                <i class="fas fa-download mr-2 animate-pulse"></i>Активные загрузки
+                <span id="activeCount" class="ml-2 px-2 py-0.5 bg-white/20 rounded-full text-xs">(0)</span>
+            </h3>
+            <div id="activeList" class="space-y-2"></div>
+        </div>
+    </div>
+
+    <!-- Table -->
+    <div class="px-4 py-3">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm" id="landingsTable">
+                    <thead>
+                        <tr class="bg-gray-50 border-b border-gray-200">
+                            <th class="text-left px-4 py-3 font-semibold text-gray-600 w-8"></th>
+                            <th class="text-left px-4 py-3 font-semibold text-gray-600">Домен / Поддомен</th>
+                            <th class="text-left px-4 py-3 font-semibold text-gray-600 w-24">Движок</th>
+                            <th class="text-left px-4 py-3 font-semibold text-gray-600 w-20">Статус</th>
+                            <th class="text-right px-4 py-3 font-semibold text-gray-600 w-20">Файлы</th>
+                            <th class="text-right px-4 py-3 font-semibold text-gray-600 w-24">Размер</th>
+                            <th class="text-right px-4 py-3 font-semibold text-gray-600 w-36">Дата</th>
+                            <th class="text-center px-4 py-3 font-semibold text-gray-600 w-44">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="landingsBody">
+                        <tr>
+                            <td colspan="8" class="text-center py-16 text-gray-400">
+                                <i class="fas fa-spinner fa-spin text-2xl mb-2 block"></i>
+                                Загрузка...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="fixed inset-0 z-50 hidden">
+        <div class="modal-overlay absolute inset-0" onclick="closeSettings()"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
+                <div>
+                    <h2 class="text-lg font-bold text-gray-900">Настройки скачивания</h2>
+                    <p class="text-sm text-gray-500" id="settingsTarget"></p>
+                </div>
+                <button onclick="closeSettings()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-6 space-y-5">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Движок</label>
+                    <div class="grid grid-cols-4 gap-2">
+                        <button onclick="setEngine('wget2')" data-engine="wget2" class="engine-btn px-3 py-2 rounded-lg border-2 text-sm font-medium transition">wget2</button>
+                        <button onclick="setEngine('httrack')" data-engine="httrack" class="engine-btn px-3 py-2 rounded-lg border-2 text-sm font-medium transition">HTTrack</button>
+                        <button onclick="setEngine('puppeteer')" data-engine="puppeteer" class="engine-btn px-3 py-2 rounded-lg border-2 text-sm font-medium transition">Puppeteer</button>
+                        <button onclick="setEngine('smart')" data-engine="smart" class="engine-btn px-3 py-2 rounded-lg border-2 text-sm font-medium transition">Smart</button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Глубина</label>
+                        <input type="number" id="cfgDepth" min="0" max="10" value="2" class="config-input w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Пауза (сек)</label>
+                        <input type="number" id="cfgWait" min="0" max="10" step="0.1" value="0.5" class="config-input w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    </div>
+                </div>
+                <div class="flex items-center justify-between">
+                    <label class="text-sm font-semibold text-gray-700">Включать поддомены</label>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="cfgSubdomains" class="sr-only peer" checked>
+                        <div class="w-10 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Доп. домены (CDN)</label>
+                    <textarea id="cfgExtraDomains" rows="2" placeholder="cdn.example.com, shop.example.com" class="config-input w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none"></textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">User Agent</label>
+                    <input type="text" id="cfgUserAgent" placeholder="Mozilla/5.0 ..." class="config-input w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div class="border-t pt-5 space-y-2">
+                    <button onclick="saveSettings()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition text-sm">
+                        <i class="fas fa-save mr-2"></i>Сохранить
+                    </button>
+                    <button onclick="redownloadWithSettings()" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2.5 rounded-lg transition text-sm">
+                        <i class="fas fa-redo mr-2"></i>Перескачать
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analyze Modal -->
+    <div id="analyzeModal" class="fixed inset-0 z-50 hidden">
+        <div class="modal-overlay absolute inset-0" onclick="closeAnalyze()"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
+                <div>
+                    <h2 class="text-lg font-bold text-gray-900">Анализ изменений</h2>
+                    <p class="text-sm text-gray-500" id="analyzeTarget"></p>
+                </div>
+                <button onclick="closeAnalyze()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-6" id="analyzeContent">
+                <div class="text-center py-12 text-gray-400">
+                    <i class="fas fa-spinner fa-spin text-2xl mb-3"></i>
+                    <p>Анализируем...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scan Modal -->
+    <div id="scanModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col m-4">
+            <div class="flex items-center justify-between p-4 border-b">
+                <div class="flex items-center space-x-3"><i class="fas fa-sitemap text-indigo-600"></i><span class="font-semibold text-gray-800">Карта поддоменов</span></div>
+                <button onclick="closeScanModal()" class="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="scanLoading" class="p-8 text-center">
+                <i class="fas fa-spinner fa-spin text-4xl text-indigo-600 mb-4"></i>
+                <p class="text-gray-600">Сканирование сайта...</p>
+            </div>
+            <div id="scanResults" class="hidden flex-1 overflow-y-auto p-4">
+                <div class="mb-4 p-3 bg-indigo-50 rounded-lg">
+                    <div class="text-sm text-indigo-700"><i class="fas fa-info-circle mr-1"></i>Просканировано страниц: <span id="scanPagesCount">0</span></div>
+                    <div class="text-xs text-indigo-600 mt-1">Базовый домен: <strong id="scanBaseDomain"></strong></div>
+                </div>
+                <div class="mb-3 flex items-center justify-between">
+                    <span class="text-sm font-medium text-gray-700">Найденные поддомены:</span>
+                    <div class="space-x-2">
+                        <button onclick="selectAllDomains()" class="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200">Все</button>
+                        <button onclick="selectMainOnly()" class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">Только основной</button>
+                    </div>
+                </div>
+                <div id="subdomainsList" class="space-y-2"></div>
+            </div>
+            <div id="scanFooter" class="hidden p-4 border-t bg-gray-50 rounded-b-xl">
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-gray-600">Выбрано: <strong id="selectedCount">0</strong> доменов</span>
+                    <div class="space-x-2">
+                        <button onclick="closeScanModal()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">Отмена</button>
+                        <button onclick="applySelectedDomains()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"><i class="fas fa-check mr-1"></i>Применить</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- HTML Viewer Modal -->
+    <div id="viewerModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-5/6 flex flex-col m-4">
+            <div class="flex items-center justify-between p-4 border-b">
+                <div class="flex items-center space-x-3"><i class="fas fa-globe text-indigo-600"></i><span id="viewerTitle" class="font-semibold text-gray-800">Просмотр сайта</span></div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="document.getElementById('viewerFrame').contentWindow.history.back()" class="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"><i class="fas fa-arrow-left"></i></button>
+                    <button onclick="document.getElementById('viewerFrame').contentWindow.history.forward()" class="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"><i class="fas fa-arrow-right"></i></button>
+                    <input type="text" id="viewerUrl" class="px-3 py-1 border rounded text-sm w-64" readonly>
+                    <button onclick="window.open(document.getElementById('viewerUrl').value,'_blank')" class="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"><i class="fas fa-external-link-alt"></i></button>
+                    <button onclick="closeViewer()" class="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+            <div class="flex-1 overflow-hidden"><iframe id="viewerFrame" class="w-full h-full border-0" sandbox="allow-same-origin allow-scripts"></iframe></div>
+        </div>
+    </div>
+
+    <!-- Job Log Modal -->
+    <div id="logModal" class="fixed inset-0 z-50 hidden">
+        <div class="modal-overlay absolute inset-0" onclick="closeLogModal()"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10">
+                <div><h2 class="text-lg font-bold text-gray-900">Лог задачи</h2><p class="text-sm text-gray-500" id="logJobInfo"></p></div>
+                <button onclick="closeLogModal()" class="text-gray-400 hover:text-gray-600 text-xl"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-4">
+                <div class="log-container bg-gray-900 text-green-400 p-4 rounded-lg max-h-[70vh] overflow-y-auto">
+                    <pre id="logContent" class="whitespace-pre-wrap"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+const socket = io({ transports: ['polling'], upgrade: false, pingInterval: 10000, pingTimeout: 5000 });
+let landingsData = [];
+let currentConfigKey = '';
+let currentEngine = 'wget2';
+let currentSettingsContext = {};
+let expandedDomains = {};
+let expandedFolders = {};
+let expandedSubs = {};
+const jobs = new Map();
+
+// =========================================================================
+// LOAD & RENDER LANDINGS TABLE
+// =========================================================================
+async function loadLandings() {
+    try {
+        const resp = await fetch('/api/landings');
+        landingsData = await resp.json();
+        renderTable(landingsData);
+        updateStats(landingsData);
+    } catch(e) {
+        document.getElementById('landingsBody').innerHTML = `
+            <tr><td colspan="8" class="text-center py-16 text-red-400">
+                <i class="fas fa-exclamation-triangle text-2xl mb-2 block"></i>
+                Ошибка: ${e.message}
+            </td></tr>`;
+    }
+}
+
+function loadAll() { loadLandings(); loadJobs(); }
+
+function updateStats(data) {
+    let totalFolders = 0, totalFiles = 0, totalSize = 0;
+    data.forEach(d => { totalFolders += d.folders.length; totalFiles += d.total_files; totalSize += d.total_size; });
+    document.getElementById('statDomains').textContent = data.length;
+    document.getElementById('statFolders').textContent = totalFolders;
+    document.getElementById('statFiles').textContent = totalFiles;
+    document.getElementById('statSize').textContent = formatSize(totalSize);
+}
+
+function formatSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024, sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function formatDuration(s) {
+    if (s < 60) return s + 's';
+    return Math.floor(s/60) + 'm ' + (s%60) + 's';
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function renderTable(data) {
+    const tbody = document.getElementById('landingsBody');
+    if (!data.length) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-16 text-gray-400">
+            <i class="fas fa-globe text-3xl mb-3 block text-gray-300"></i>
+            Нет скачанных сайтов. Используйте форму выше для скачивания.
+        </td></tr>`;
+        return;
+    }
+
+    let html = '';
+    data.forEach((domain, di) => {
+        const isOpen = expandedDomains[di];
+        
+        // Определяем статус скачивания домена
+        const isDownloaded = domain.folders && domain.folders.length > 0;
+        const hasActiveJob = domain.folders.some(f => f.is_active);
+        
+        let statusBadge = '';
+        if (hasActiveJob) {
+            statusBadge = '<span class="px-2 py-1 bg-blue-500 text-white text-xs rounded-full ml-2 animate-pulse"><i class="fas fa-download mr-1"></i>Скачивается</span>';
+        } else if (isDownloaded) {
+            statusBadge = '<span class="px-2 py-1 bg-green-500 text-white text-xs rounded-full ml-2"><i class="fas fa-check-circle mr-1"></i>Скачано</span>';
+        } else {
+            statusBadge = '<span class="px-2 py-1 bg-gray-300 text-gray-600 text-xs rounded-full ml-2"><i class="fas fa-circle mr-1"></i>Не скачано</span>';
+        }
+        
+        html += `<tr class="domain-row border-b border-gray-100 bg-gray-50/50 font-medium" onclick="toggleDomain(${di})">
+            <td class="px-4 py-3 text-gray-400"><i class="fas fa-caret-right expand-caret ${isOpen ? 'open' : ''}"></i></td>
+            <td class="px-4 py-3">
+                <div class="flex items-center">
+                    <i class="fas fa-globe text-indigo-400 mr-2"></i>
+                    <span class="text-gray-900">${esc(domain.parent_domain)}</span>
+                    ${statusBadge}
+                    <span class="text-gray-400 font-normal ml-2 text-xs">${domain.folders.length} папок</span>
+                </div>
+            </td>
+            <td class="px-4 py-3 text-gray-400">--</td>
+            <td class="px-4 py-3">--</td>
+            <td class="px-4 py-3 text-right text-gray-700">${domain.total_files}</td>
+            <td class="px-4 py-3 text-right text-gray-700">${domain.total_size_formatted}</td>
+            <td class="px-4 py-3 text-right text-gray-400">--</td>
+            <td class="px-4 py-3 text-center">--</td>
+        </tr>`;
+        if (!isOpen) return;
+
+        domain.folders.forEach((folder, fi) => {
+            const fkey = `${di}_${fi}`;
+            const fOpen = expandedFolders[fkey];
+            
+            // Улучшенный статус с цветными бейджами
+            let statusHtml = '';
+            if (folder.is_active) {
+                statusHtml = '<span class="px-2 py-1 bg-blue-500 text-white text-xs rounded-full"><i class="fas fa-spinner fa-spin mr-1"></i>В процессе</span>';
+            } else if (folder.job) {
+                const status = folder.job.status;
+                if (status === 'completed') {
+                    statusHtml = '<span class="px-2 py-1 bg-green-500 text-white text-xs rounded-full"><i class="fas fa-check mr-1"></i>Завершено</span>';
+                } else if (status === 'failed') {
+                    statusHtml = '<span class="px-2 py-1 bg-red-500 text-white text-xs rounded-full"><i class="fas fa-times mr-1"></i>Ошибка</span>';
+                } else if (status === 'paused') {
+                    statusHtml = '<span class="px-2 py-1 bg-yellow-500 text-white text-xs rounded-full"><i class="fas fa-pause mr-1"></i>Пауза</span>';
+                } else if (status === 'stopped') {
+                    statusHtml = '<span class="px-2 py-1 bg-gray-500 text-white text-xs rounded-full"><i class="fas fa-stop mr-1"></i>Остановлено</span>';
+                } else {
+                    statusHtml = `<span class="px-2 py-1 bg-gray-400 text-white text-xs rounded-full">${status}</span>`;
+                }
+            } else {
+                statusHtml = '<span class="px-2 py-1 bg-gray-200 text-gray-600 text-xs rounded-full"><i class="fas fa-check-circle mr-1"></i>Скачано</span>';
+            }
+            
+            const cfgJson = esc(JSON.stringify(folder.config || {}));
+            const jobUrl = folder.job ? esc(folder.job.url) : '';
+            const jobId = folder.job ? folder.job.id : '';
+
+            html += `<tr class="sub-row border-b border-gray-50 cursor-pointer" onclick="toggleFolder('${fkey}')">
+                <td class="px-4 py-2.5 text-gray-300 pl-8"><i class="fas fa-caret-right expand-caret text-xs ${fOpen ? 'open' : ''}"></i></td>
+                <td class="px-4 py-2.5">
+                    <i class="fas fa-folder text-amber-400 mr-2 text-xs"></i>
+                    <span class="text-gray-800">${esc(folder.domain)}</span>
+                    <span class="text-gray-400 text-xs ml-1">${folder.subdomains.length ? folder.subdomains.length + ' подд.' : ''} ${(folder.pages||[]).length ? (folder.pages||[]).length + ' стр.' : ''}</span>
+                </td>
+                <td class="px-4 py-2.5"><span class="badge badge-${folder.engine}">${folder.engine}</span></td>
+                <td class="px-4 py-2.5 text-xs">${statusHtml}</td>
+                <td class="px-4 py-2.5 text-right text-gray-600">${folder.files}</td>
+                <td class="px-4 py-2.5 text-right text-gray-600">${folder.size}</td>
+                <td class="px-4 py-2.5 text-right text-gray-500 text-xs">${folder.date}</td>
+                <td class="px-4 py-2.5 text-center" onclick="event.stopPropagation()">
+                    <button class="action-btn text-gray-400" onclick="openFolderPath('${esc(folder.path)}')" title="Открыть папку"><i class="fas fa-folder-open"></i></button>
+                    <button class="action-btn text-gray-400" onclick="openViewer('${esc(folder.folder_name)}')" title="Просмотр"><i class="fas fa-eye"></i></button>
+                    <button class="action-btn text-blue-400" onclick="checkChanges('${esc(folder.folder_name)}')" title="Проверить изменения"><i class="fas fa-sync-alt"></i></button>
+                    <button class="action-btn text-gray-400" onclick="openSettings('${esc(folder.folder_name)}', '${esc(folder.folder_name)}', '${jobUrl}', ${cfgJson})" title="Настройки"><i class="fas fa-cog"></i></button>
+                    <button class="action-btn text-gray-400" onclick="startAnalyze('${jobUrl}', '${esc(folder.path)}', '')" title="Анализ"><i class="fas fa-search-plus"></i></button>
+                    ${jobId ? `<button class="action-btn text-gray-400" onclick="showJobLog('${jobId}')" title="Лог"><i class="fas fa-terminal"></i></button>` : ''}
+                    <button class="action-btn text-gray-400" onclick="redownloadSub('${jobUrl}', '${esc(folder.folder_name)}', '${esc(folder.folder_name)}')" title="Перескачать"><i class="fas fa-redo"></i></button>
+                    <button class="action-btn text-red-300" onclick="deleteFolder('${esc(folder.folder_name)}')" title="Удалить"><i class="fas fa-trash"></i></button>
+                </td>
+            </tr>`;
+            if (!fOpen) return;
+
+            if (folder.subdomains.length) {
+                folder.subdomains.forEach((sub, si) => {
+                    const skey = `${di}_${fi}_${si}`;
+                    const sOpen = expandedSubs[skey];
+                    const subCfgJson = esc(JSON.stringify(sub.config || {}));
+                    html += `<tr class="page-row border-b border-gray-50 cursor-pointer" onclick="toggleSub('${skey}')">
+                        <td class="px-4 py-2 pl-14 text-gray-300"><i class="fas fa-caret-right expand-caret text-xs ${sOpen ? 'open' : ''}"></i></td>
+                        <td class="px-4 py-2"><i class="fas fa-sitemap text-blue-300 mr-2 text-xs"></i><span class="text-gray-700 text-xs font-medium">${esc(sub.name)}</span><span class="text-gray-400 text-xs ml-1">(${sub.pages.length} стр.)</span></td>
+                        <td class="px-4 py-2 text-xs text-gray-300">--</td>
+                        <td class="px-4 py-2 text-xs text-gray-300">--</td>
+                        <td class="px-4 py-2 text-right text-gray-500 text-xs">${sub.files}</td>
+                        <td class="px-4 py-2 text-right text-gray-500 text-xs">${sub.size}</td>
+                        <td class="px-4 py-2 text-right text-gray-400 text-xs">${sub.date}</td>
+                        <td class="px-4 py-2 text-center" onclick="event.stopPropagation()">
+                            <button class="action-btn text-gray-400" onclick="openSettings('${esc(sub.config_key)}', '${esc(sub.name)}', 'https://${esc(sub.name)}', ${subCfgJson})" title="Настройки"><i class="fas fa-cog"></i></button>
+                            <button class="action-btn text-gray-400" onclick="startAnalyze('https://${esc(sub.name)}', '${esc(folder.path)}', '${esc(sub.name)}')" title="Анализ"><i class="fas fa-search-plus"></i></button>
+                            <button class="action-btn text-gray-400" onclick="redownloadSub('https://${esc(sub.name)}', '${esc(folder.folder_name)}', '${esc(sub.config_key)}')" title="Перескачать"><i class="fas fa-redo"></i></button>
+                        </td>
+                    </tr>`;
+                    if (!sOpen || !sub.pages.length) return;
+                    sub.pages.forEach(page => {
+                        html += `<tr class="border-b border-gray-50">
+                            <td class="px-4 py-1.5 pl-20"></td>
+                            <td class="px-4 py-1.5"><i class="fas fa-file-code text-gray-300 mr-2 text-xs"></i><span class="text-gray-600 font-mono text-xs">${esc(page.name)}</span> <span class="text-gray-400 text-xs">${esc(page.path)}</span></td>
+                            <td class="px-4 py-1.5"></td><td class="px-4 py-1.5"></td><td class="px-4 py-1.5"></td>
+                            <td class="px-4 py-1.5 text-right text-gray-400 text-xs">${page.size}</td>
+                            <td class="px-4 py-1.5 text-right text-gray-400 text-xs">${page.date}</td>
+                            <td class="px-4 py-1.5 text-center"><button class="action-btn text-gray-400" onclick="viewPage('${esc(folder.folder_name)}', '${esc(page.path)}')" title="Просмотр"><i class="fas fa-eye"></i></button></td>
+                        </tr>`;
+                    });
+                });
+            }
+
+            const folderPages = folder.pages || [];
+            if (folderPages.length) {
+                if (folder.subdomains.length) {
+                    html += `<tr class="border-b border-gray-100"><td colspan="8" class="pl-12 py-1.5 text-xs text-gray-400 font-semibold bg-gray-50/80"><i class="fas fa-file-alt mr-1"></i>Все страницы (${folderPages.length})</td></tr>`;
+                }
+                folderPages.forEach(page => {
+                    html += `<tr class="border-b border-gray-50">
+                        <td class="px-4 py-1.5 pl-14"></td>
+                        <td class="px-4 py-1.5"><i class="fas fa-file-code text-emerald-300 mr-2 text-xs"></i><span class="text-gray-600 font-mono text-xs">${esc(page.path)}</span></td>
+                        <td class="px-4 py-1.5"></td><td class="px-4 py-1.5"></td><td class="px-4 py-1.5"></td>
+                        <td class="px-4 py-1.5 text-right text-gray-400 text-xs">${page.size}</td>
+                        <td class="px-4 py-1.5 text-right text-gray-400 text-xs">${page.date}</td>
+                        <td class="px-4 py-1.5 text-center"><button class="action-btn text-gray-400" onclick="viewPage('${esc(folder.folder_name)}', '${esc(page.path)}')" title="Просмотр"><i class="fas fa-eye"></i></button></td>
+                    </tr>`;
+                });
+            }
+            if (!folder.subdomains.length && !folderPages.length) {
+                html += `<tr class="border-b border-gray-50"><td colspan="8" class="pl-16 py-2 text-xs text-gray-400 italic">Папка пуста</td></tr>`;
+            }
+        });
+    });
+    tbody.innerHTML = html;
+}
+
+// =========================================================================
+// TOGGLE
+// =========================================================================
+function toggleDomain(di) { expandedDomains[di] = !expandedDomains[di]; renderTable(landingsData); }
+function toggleFolder(fkey) { expandedFolders[fkey] = !expandedFolders[fkey]; renderTable(landingsData); }
+function toggleSub(skey) { expandedSubs[skey] = !expandedSubs[skey]; renderTable(landingsData); }
+
+// =========================================================================
+// BASIC ACTIONS
+// =========================================================================
+function openFolderPath(path) { fetch('/api/open-folder?path=' + encodeURIComponent(path)); }
+function openDownloads() { fetch('/api/open-downloads'); }
+function viewPage(folder, relPath) { window.open('/api/browse/' + folder + '/' + relPath, '_blank'); }
+
+// =========================================================================
+// ENGINE SELECTION (new job form)
+// =========================================================================
+function selEng(engine) {
+    document.getElementById('selectedEngine').value = engine;
+    document.querySelectorAll('.eng-btn').forEach(btn => {
+        btn.classList.remove('bg-gradient-to-r','from-purple-600','via-blue-600','to-orange-500','text-white','bg-purple-600','bg-blue-600','bg-orange-600');
+        btn.classList.add('bg-gray-200','text-gray-700');
+    });
+    const btn = document.querySelector(`[data-eng="${engine}"]`);
+    btn.classList.remove('bg-gray-200','text-gray-700');
+    if (engine === 'smart') btn.classList.add('bg-gradient-to-r','from-purple-600','via-blue-600','to-orange-500','text-white');
+    else if (engine === 'wget2') btn.classList.add('bg-purple-600','text-white');
+    else if (engine === 'puppeteer') btn.classList.add('bg-blue-600','text-white');
+    else if (engine === 'httrack') btn.classList.add('bg-orange-600','text-white');
+
+    document.querySelectorAll('#engineDesc > span').forEach(s => s.classList.add('hidden'));
+    const desc = document.querySelector(`[data-desc="${engine}"]`);
+    if (desc) desc.classList.remove('hidden');
+
+    document.getElementById('w2Opts').classList.add('hidden');
+    document.getElementById('pupOpts').classList.add('hidden');
+    document.getElementById('htOpts').classList.add('hidden');
+    if (engine === 'smart' || engine === 'wget2') document.getElementById('w2Opts').classList.remove('hidden');
+    if (engine === 'smart' || engine === 'puppeteer') document.getElementById('pupOpts').classList.remove('hidden');
+    if (engine === 'httrack') document.getElementById('htOpts').classList.remove('hidden');
+}
+
+// =========================================================================
+// PRESETS
+// =========================================================================
+function applyPreset(p) {
+    const el = id => document.getElementById(id);
+    // Базовые настройки
+    el('optRecursive').checked = true; el('optDepth').value = 3; el('optPageReq').checked = true;
+    el('optConvertLinks').checked = true; el('optSpanHosts').checked = false; el('optNoParent').checked = true;
+    el('optRateLimit').value = ''; el('optWait').value = 0.5; el('optRandomWait').checked = false;
+    el('optUserAgent').value = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    el('optIgnoreRobots').checked = false; el('optNoCookies').checked = false; el('optMirror').checked = false;
+    el('optRestrictNames').checked = true; el('optTrustServer').checked = true; el('optSubdomains').checked = false;
+    el('optThreads').value = 15; el('optChunk').value = '5M'; el('optH2Win').value = 50;
+    el('optProgress').checked = true; el('optMetalink').checked = true;
+    el('optCompression').value = 'gzip,br,zstd'; el('optCutUrlVars').checked = true; el('optCutFileVars').checked = true;
+    el('optKeepExt').checked = true; el('optXattr').checked = true; el('optHsts').checked = true; el('optOcsp').checked = false;
+    el('optCutDirs').value = 0; el('optMimeFilter').value = '';
+    
+    if (p === 'quick') {
+        // Быстрая загрузка - минимум рекурсии, максимум скорости
+        el('optRecursive').checked = false; el('optDepth').value = 1;
+        el('optRateLimit').value = ''; el('optWait').value = 0; el('optThreads').value = 20;
+        el('optChunk').value = '10M'; el('optH2Win').value = 100; el('optCompression').value = 'gzip,br,zstd';
+        selEng('wget2');
+    } else if (p === 'full') {
+        // Полное зеркало - всё включено
+        el('optMirror').checked = true; el('optDepth').value = 5; el('optSpanHosts').checked = true;
+        el('optSubdomains').checked = true; el('optIgnoreRobots').checked = true;
+        el('optThreads').value = 25; el('optChunk').value = '5M'; el('optH2Win').value = 50;
+        el('optXattr').checked = true; el('optCutFileVars').checked = true; el('optCutUrlVars').checked = true;
+        selEng('smart');
+    } else if (p === 'stealth') {
+        // Скрытный режим - медленно, незаметно
+        el('optWait').value = 3; el('optRandomWait').checked = true; el('optNoCookies').checked = true;
+        el('optIgnoreRobots').checked = true; el('optRateLimit').value = '100k';
+        el('optThreads').value = 3; el('optChunk').value = ''; el('optH2Win').value = 10;
+        selEng('wget2');
+    }
+    document.getElementById('advOpts').classList.remove('hidden');
+}
+
+// =========================================================================
+// START CLONING
+// =========================================================================
+async function startCloning() {
+    const url = document.getElementById('urlInput').value.trim();
+    if (!url) { alert('Введите URL'); return; }
+    const engine = document.getElementById('selectedEngine').value;
+    const el = id => document.getElementById(id);
+    const options = {
+        recursive: el('optRecursive').checked, depth: parseInt(el('optDepth').value),
+        page_requisites: el('optPageReq').checked, convert_links: el('optConvertLinks').checked,
+        span_hosts: el('optSpanHosts').checked, no_parent: el('optNoParent').checked,
+        rate_limit: el('optRateLimit').value, wait: parseFloat(el('optWait').value),
+        random_wait: el('optRandomWait').checked, user_agent: el('optUserAgent').value,
+        reject: el('optReject').value, ignore_robots: el('optIgnoreRobots').checked,
+        no_cookies: el('optNoCookies').checked, mirror_mode: el('optMirror').checked,
+        restrict_file_names: el('optRestrictNames').checked, trust_server_names: el('optTrustServer').checked,
+        include_subdomains: el('optSubdomains').checked, extra_domains: el('optExtraDomains').value,
+        parallel_threads: parseInt(el('optThreads').value) || 15, chunk_size: el('optChunk').value,
+        http2_window: parseInt(el('optH2Win').value) || 50, progress_bar: el('optProgress').checked,
+        metalink: el('optMetalink').checked,
+        max_pages: parseInt(el('optMaxPages').value) || 200, js_wait: parseInt(el('optJsWait').value) || 3000,
+        js_scroll: el('optJsScroll').checked, js_click_more: el('optJsClick').checked,
+        httrack_continue: el('optHtContinue').checked, httrack_external: el('optHtExternal').checked,
+        httrack_near_links: el('optHtNearLinks')?.checked || false,
+        compression: el('optCompression')?.value || 'gzip,br,zstd',
+        cut_url_get_vars: el('optCutUrlVars')?.checked || false,
+        cut_file_get_vars: el('optCutFileVars')?.checked || false,
+        keep_extension: el('optKeepExt')?.checked || false,
+        xattr: el('optXattr')?.checked || false,
+        hsts: el('optHsts')?.checked || false,
+        ocsp_stapling: el('optOcsp')?.checked || false,
+        mime_filter: el('optMimeFilter')?.value || '',
+        cut_dirs: parseInt(el('optCutDirs')?.value) || 0
+    };
+    try {
+        const resp = await fetch('/api/jobs', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ url, options, use_wget2: engine === 'wget2', engine })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            alert(resp.status === 409 ? 'Этот URL уже скачивается! Job: ' + data.existing_job_id : 'Ошибка: ' + (data.error || 'неизвестная'));
+            return;
+        }
+        jobs.set(data.id, data);
+        updateActiveDownloads();
+        document.getElementById('urlInput').value = '';
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+// =========================================================================
+// JOBS & ACTIVE DOWNLOADS
+// =========================================================================
+async function loadJobs() {
+    try {
+        const resp = await fetch('/api/jobs');
+        const list = await resp.json();
+        list.forEach(j => jobs.set(j.id, j));
+        updateActiveDownloads();
+    } catch(e) { console.error('loadJobs:', e); }
+}
+
+function updateActiveDownloads() {
+    const active = Array.from(jobs.values()).filter(j => ['running','pending','paused'].includes(j.status));
+    const section = document.getElementById('activeSection');
+    const list = document.getElementById('activeList');
+    const countEl = document.getElementById('activeCount');
+    
+    // Обновляем счётчик
+    if (countEl) countEl.textContent = '(' + active.length + ')';
+    
+    // ВАЖНО: Показываем секцию если есть активные загрузки
+    if (active.length > 0) {
+        section.classList.remove('hidden');
+    } else {
+        // Скрываем только если действительно нет активных
+        section.classList.add('hidden');
+        return;
+    }
+    
+    // Рендерим активные загрузки
+    list.innerHTML = active.map(job => {
+        const isPaused = job.status === 'paused';
+        const isPending = job.status === 'pending';
+        const isRunning = job.status === 'running';
+        
+        // Иконка в зависимости от статуса
+        let icon = 'fa-spinner fa-spin';
+        let statusBadge = '';
+        if (isPaused) {
+            icon = 'fa-pause';
+            statusBadge = '<span class="px-1.5 py-0.5 bg-blue-500/50 text-white text-xs rounded ml-2">ПАУЗА</span>';
+        } else if (isPending) {
+            icon = 'fa-clock';
+            statusBadge = '<span class="px-1.5 py-0.5 bg-yellow-500/50 text-white text-xs rounded ml-2">ОЖИДАНИЕ</span>';
+        } else if (isRunning) {
+            statusBadge = '<span class="px-1.5 py-0.5 bg-green-500/50 text-white text-xs rounded ml-2 animate-pulse">СКАЧИВАНИЕ</span>';
+        }
+        
+        return `<div class="bg-white/10 backdrop-blur rounded-lg p-3 border border-white/20">
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center space-x-2 flex-1 min-w-0">
+                    <i class="fas ${icon} text-white text-sm"></i>
+                    <span class="text-white font-medium text-sm truncate">${esc(job.url)}</span>
+                    ${statusBadge}
+                </div>
+                <div class="flex items-center space-x-1 ml-2">
+                    ${isPaused
+                        ? `<button onclick="resumeJob('${job.id}')" class="px-2 py-1 bg-green-500/80 text-white rounded hover:bg-green-600 text-xs" title="Продолжить"><i class="fas fa-play"></i></button>`
+                        : `<button onclick="pauseJob('${job.id}')" class="px-2 py-1 bg-blue-500/80 text-white rounded hover:bg-blue-600 text-xs" title="Пауза"><i class="fas fa-pause"></i></button>`}
+                    <button onclick="stopJob('${job.id}')" class="px-2 py-1 bg-red-500/80 text-white rounded hover:bg-red-600 text-xs" title="Стоп"><i class="fas fa-stop"></i></button>
+                    <button onclick="showJobLog('${job.id}')" class="px-2 py-1 bg-white/20 text-white rounded hover:bg-white/30 text-xs" title="Лог"><i class="fas fa-terminal"></i></button>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3 mb-2 text-xs">
+                <span class="text-white/80"><i class="fas fa-file mr-1"></i>${job.files_downloaded} файлов</span>
+                <span class="text-white/80"><i class="fas fa-hdd mr-1"></i>${job.total_size}</span>
+                <span class="text-white/80"><i class="fas fa-cog mr-1"></i>${job.engine || 'wget2'}</span>
+            </div>
+            <div class="w-full bg-white/20 rounded-full h-2 mb-2">
+                <div class="bg-gradient-to-r from-green-400 to-blue-500 h-2 rounded-full transition-all duration-300" style="width:${Math.min(job.files_downloaded * 2, 100)}%"></div>
+            </div>
+            <div class="text-white/60 text-xs truncate font-mono bg-black/20 rounded px-2 py-1">
+                ${job.output_lines && job.output_lines.length ? esc(job.output_lines[job.output_lines.length-1]) : 'Инициализация...'}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+async function stopJob(id) {
+    try { const r = await fetch(`/api/jobs/${id}/stop`, {method:'POST'}); if(r.ok){const j=await r.json();jobs.set(j.id,j);updateActiveDownloads();} } catch(e){console.error(e);}
+}
+async function pauseJob(id) {
+    try { const r = await fetch(`/api/jobs/${id}/pause`, {method:'POST'}); if(r.ok){const j=await r.json();jobs.set(j.id,j);updateActiveDownloads();} } catch(e){console.error(e);}
+}
+async function resumeJob(id) {
+    try { const r = await fetch(`/api/jobs/${id}/resume`, {method:'POST'}); if(r.ok){const j=await r.json();jobs.set(j.id,j);updateActiveDownloads();} } catch(e){console.error(e);}
+}
+
+function showJobLog(id) {
+    const job = jobs.get(id);
+    if (!job) { alert('Задача не найдена'); return; }
+    document.getElementById('logJobInfo').textContent = job.url + ' (#' + job.id + ')';
+    document.getElementById('logContent').textContent = (job.output_lines || []).join('\n');
+    document.getElementById('logModal').classList.remove('hidden');
+}
+function closeLogModal() { document.getElementById('logModal').classList.add('hidden'); }
+
+async function checkChanges(folderName) {
+    const btn = event.target.closest('button');
+    const icon = btn.querySelector('i');
+    
+    // Показываем индикатор загрузки
+    icon.classList.remove('fa-sync-alt');
+    icon.classList.add('fa-spinner', 'fa-spin');
+    btn.disabled = true;
+    
+    try {
+        const r = await fetch('/api/check-changes/' + encodeURIComponent(folderName));
+        const data = await r.json();
+        
+        // Восстанавливаем иконку
+        icon.classList.remove('fa-spinner', 'fa-spin');
+        icon.classList.add('fa-sync-alt');
+        btn.disabled = false;
+        
+        if (data.error) {
+            alert('Ошибка проверки: ' + data.error);
+            return;
+        }
+        
+        // Формируем сообщение о результатах
+        let message = `Проверка изменений для ${folderName}\n\n`;
+        message += `URL: ${data.url}\n`;
+        message += `Проверено: ${new Date(data.checked_at).toLocaleString('ru-RU')}\n\n`;
+        
+        if (data.has_changes) {
+            message += '🔴 ОБНАРУЖЕНЫ ИЗМЕНЕНИЯ!\n\n';
+            
+            if (data.title_changed) {
+                message += `Заголовок изменён:\n`;
+                message += `  Локально: "${data.local_title}"\n`;
+                message += `  Онлайн: "${data.online_title}"\n\n`;
+            }
+            
+            if (data.online_elements && data.local_elements) {
+                const diff = data.online_elements - data.local_elements;
+                message += `Элементов HTML:\n`;
+                message += `  Локально: ${data.local_elements}\n`;
+                message += `  Онлайн: ${data.online_elements}`;
+                message += diff > 0 ? ` (+${diff})` : ` (${diff})`;
+                message += `\n\n`;
+            }
+            
+            message += `Хеши:\n`;
+            message += `  Локальный: ${data.local_hash}\n`;
+            message += `  Онлайн: ${data.online_hash}\n\n`;
+            message += `Рекомендуется перескачать сайт для обновления.`;
+        } else {
+            message += '✅ Изменений не обнаружено\n\n';
+            message += 'Локальная версия актуальна.';
+        }
+        
+        alert(message);
+        
+    } catch(e) {
+        icon.classList.remove('fa-spinner', 'fa-spin');
+        icon.classList.add('fa-sync-alt');
+        btn.disabled = false;
+        alert('Ошибка проверки: ' + e.message);
+    }
+}
+
+async function deleteFolder(folderName) {
+    if (!confirm('Удалить "' + folderName + '"? Это действие нельзя отменить.')) return;
+    try {
+        const r = await fetch('/api/downloads/' + encodeURIComponent(folderName), {method:'DELETE'});
+        if (r.ok) loadLandings();
+        else { const d = await r.json(); alert('Ошибка: ' + (d.error || '')); }
+    } catch(e) { alert('Ошибка удаления'); }
+}
+
+// =========================================================================
+// SETTINGS MODAL
+// =========================================================================
+function openSettings(configKey, targetName, url, existingConfig) {
+    currentConfigKey = configKey;
+    currentSettingsContext = { configKey, targetName, url };
+    document.getElementById('settingsTarget').textContent = targetName;
+    const cfg = (typeof existingConfig === 'string') ? JSON.parse(existingConfig || '{}') : (existingConfig || {});
+    setEngine(cfg.engine || 'wget2');
+    document.getElementById('cfgDepth').value = cfg.depth || 2;
+    document.getElementById('cfgWait').value = cfg.wait || 0.5;
+    document.getElementById('cfgSubdomains').checked = cfg.include_subdomains !== false;
+    document.getElementById('cfgExtraDomains').value = cfg.extra_domains || '';
+    document.getElementById('cfgUserAgent').value = cfg.user_agent || '';
+    document.getElementById('settingsModal').classList.remove('hidden');
+}
+function closeSettings() { document.getElementById('settingsModal').classList.add('hidden'); }
+
+function setEngine(engine) {
+    currentEngine = engine;
+    document.querySelectorAll('.engine-btn').forEach(btn => {
+        const on = btn.dataset.engine === engine;
+        btn.className = 'engine-btn px-3 py-2 rounded-lg border-2 text-sm font-medium transition ' + (on ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300');
+    });
+}
+
+function getSettingsFromForm() {
+    return {
+        engine: currentEngine,
+        depth: parseInt(document.getElementById('cfgDepth').value) || 2,
+        wait: parseFloat(document.getElementById('cfgWait').value) || 0.5,
+        include_subdomains: document.getElementById('cfgSubdomains').checked,
+        extra_domains: document.getElementById('cfgExtraDomains').value.trim(),
+        user_agent: document.getElementById('cfgUserAgent').value.trim()
+    };
+}
+
+async function saveSettings() {
+    try {
+        const resp = await fetch('/api/landings/config', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ config_key: currentConfigKey, settings: getSettingsFromForm() })
+        });
+        const data = await resp.json();
+        if (data.success) { closeSettings(); loadLandings(); }
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+async function redownloadWithSettings() {
+    await saveSettings();
+    const url = currentSettingsContext.url;
+    const folderName = currentConfigKey.split('/')[0];
+    if (!url) { alert('URL не найден'); return; }
+    try {
+        const resp = await fetch('/api/landings/redownload', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ url, folder_name: folderName, config_key: currentConfigKey })
+        });
+        const data = await resp.json();
+        if (data.id) { closeSettings(); loadLandings(); }
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+async function redownloadSub(url, folderName, configKey) {
+    if (!url) { alert('URL не найден'); return; }
+    if (!confirm('Перескачать ' + url + '?')) return;
+    try {
+        const resp = await fetch('/api/landings/redownload', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ url, folder_name: folderName, config_key: configKey })
+        });
+        const data = await resp.json();
+        if (data.id) loadLandings();
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+
+// =========================================================================
+// ANALYZE MODAL
+// =========================================================================
+async function startAnalyze(url, folderPath, subdomain) {
+    if (!url) { alert('URL не найден'); return; }
+    document.getElementById('analyzeTarget').textContent = url;
+    document.getElementById('analyzeModal').classList.remove('hidden');
+    document.getElementById('analyzeContent').innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-spinner fa-spin text-2xl mb-3"></i><p>Сравниваем...</p></div>';
+    try {
+        const resp = await fetch('/api/landings/analyze', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ url, folder_path: folderPath, subdomain })
+        });
+        renderAnalysis(await resp.json());
+    } catch(e) {
+        document.getElementById('analyzeContent').innerHTML = '<div class="text-center py-12 text-red-400"><i class="fas fa-exclamation-triangle text-2xl mb-3"></i><p>' + e.message + '</p></div>';
+    }
+}
+
+function renderAnalysis(data) {
+    const { changes, summary } = data;
+    let h = `<div class="grid grid-cols-4 gap-3 mb-6">
+        <div class="bg-amber-50 rounded-lg p-3 text-center"><div class="text-2xl font-bold text-amber-600">${summary.modified}</div><div class="text-xs text-amber-700">Изменено</div></div>
+        <div class="bg-green-50 rounded-lg p-3 text-center"><div class="text-2xl font-bold text-green-600">${summary.new_on_remote}</div><div class="text-xs text-green-700">Новые</div></div>
+        <div class="bg-indigo-50 rounded-lg p-3 text-center"><div class="text-2xl font-bold text-indigo-600">${summary.only_local}</div><div class="text-xs text-indigo-700">Только у нас</div></div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center"><div class="text-2xl font-bold text-gray-500">${summary.unchanged}</div><div class="text-xs text-gray-600">Без изменений</div></div>
+    </div>`;
+    if (changes.modified.length) {
+        h += '<h3 class="font-semibold text-gray-800 mb-2"><i class="fas fa-edit text-amber-500 mr-2"></i>Измененные</h3><table class="w-full text-sm mb-4"><tbody>';
+        changes.modified.forEach(m => { h += `<tr class="border-b border-gray-100"><td class="py-2 font-medium">${m.page}</td><td class="py-2 text-right text-gray-500">${m.local_size} -> ${m.remote_size}</td></tr>`; });
+        h += '</tbody></table>';
+    }
+    if (changes.new_on_remote.length) {
+        h += '<h3 class="font-semibold text-gray-800 mb-2"><i class="fas fa-plus-circle text-green-500 mr-2"></i>Новые на сайте</h3><table class="w-full text-sm mb-4"><tbody>';
+        changes.new_on_remote.forEach(n => { h += `<tr class="border-b border-gray-100"><td class="py-2">${n.page}</td><td class="py-2 text-right text-gray-500">${n.size}</td></tr>`; });
+        h += '</tbody></table>';
+    }
+    if (changes.only_local.length) {
+        h += '<h3 class="font-semibold text-gray-800 mb-2"><i class="fas fa-archive text-indigo-500 mr-2"></i>Только у нас</h3><table class="w-full text-sm mb-4"><tbody>';
+        changes.only_local.forEach(l => { h += `<tr class="border-b border-gray-100"><td class="py-2 font-mono text-xs">${l.local_path}</td><td class="py-2 text-right text-gray-500">${l.size}</td></tr>`; });
+        h += '</tbody></table>';
+    }
+    if (changes.errors.length) {
+        h += '<div class="bg-red-50 rounded-lg p-3 text-sm text-red-700 mb-4">' + changes.errors.join('<br>') + '</div>';
+    }
+    if (!summary.modified && !summary.new_on_remote && !summary.only_local && !changes.errors.length) {
+        h += '<div class="text-center py-8 text-green-500"><i class="fas fa-check-circle text-4xl mb-3"></i><p class="font-medium">Всё актуально!</p></div>';
+    }
+    document.getElementById('analyzeContent').innerHTML = h;
+}
+function closeAnalyze() { document.getElementById('analyzeModal').classList.add('hidden'); }
+
+// =========================================================================
+// VIEWER
+// =========================================================================
+async function openViewer(folderName) {
+    document.getElementById('viewerTitle').textContent = folderName;
+    try {
+        const r = await fetch('/api/find-index/' + encodeURIComponent(folderName));
+        const d = await r.json();
+        if (d.path) {
+            document.getElementById('viewerFrame').src = '/api/browse/' + d.path;
+            document.getElementById('viewerUrl').value = '/api/browse/' + d.path;
+            document.getElementById('viewerModal').classList.remove('hidden');
+        } else { alert('HTML файлы не найдены'); }
+    } catch(e) { alert('Ошибка: ' + e.message); }
+}
+function closeViewer() { document.getElementById('viewerModal').classList.add('hidden'); document.getElementById('viewerFrame').src = ''; }
+
+// =========================================================================
+// SUBDOMAIN SCANNER
+// =========================================================================
+let scannedSubdomains = [];
+let selectedDomains = new Set();
+let scanCategories = { main: [], related: [], cdn: [], external: [] };
+let startCloningAfterScan = false;
+
+async function scanSite() {
+    const url = document.getElementById('urlInput').value.trim();
+    if (!url) { alert('Введите URL'); return; }
+    document.getElementById('scanModal').classList.remove('hidden');
+    document.getElementById('scanLoading').classList.remove('hidden');
+    document.getElementById('scanResults').classList.add('hidden');
+    document.getElementById('scanFooter').classList.add('hidden');
+    try {
+        const r = await fetch('/api/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url, max_pages: 50}) });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Ошибка');
+        scannedSubdomains = data.subdomains;
+        selectedDomains = new Set();
+        scanCategories = data.categories || { main: [], related: [], cdn: [], external: [] };
+        if (scanCategories.main) scanCategories.main.forEach(s => selectedDomains.add(s.domain));
+        if (scanCategories.cdn) scanCategories.cdn.forEach(s => selectedDomains.add(s.domain));
+        if (scanCategories.related) scanCategories.related.forEach(s => selectedDomains.add(s.domain));
+        document.getElementById('scanPagesCount').textContent = data.pages_scanned;
+        document.getElementById('scanBaseDomain').textContent = data.base_domain;
+        renderSubdomainsList();
+        document.getElementById('scanLoading').classList.add('hidden');
+        document.getElementById('scanResults').classList.remove('hidden');
+        document.getElementById('scanFooter').classList.remove('hidden');
+    } catch(e) { alert('Ошибка: ' + e.message); closeScanModal(); }
+}
+
+function renderSubdomainsList() {
+    const c = document.getElementById('subdomainsList');
+    function renderItem(s) {
+        const sel = selectedDomains.has(s.domain);
+        return `<div class="p-3 rounded-lg border ${sel?'border-indigo-400 bg-indigo-50':'border-gray-200'} hover:shadow-sm">
+            <label class="flex items-center cursor-pointer">
+                <input type="checkbox" ${sel?'checked':''} onchange="toggleScanDomain('${s.domain}')" class="w-4 h-4 text-indigo-600 rounded mr-3">
+                <span class="font-medium text-gray-800 text-sm">${s.domain}</span>
+                <span class="ml-2 text-xs text-gray-500">${s.count} ссылок</span>
+            </label>
+        </div>`;
+    }
+    function renderCat(title, domains, color) {
+        if (!domains || !domains.length) return '';
+        return `<div class="mb-3"><div class="text-xs font-semibold text-${color}-700 mb-1">${title} (${domains.length})</div>${domains.map(renderItem).join('')}</div>`;
+    }
+    c.innerHTML = renderCat('Основные и поддомены', scanCategories.main, 'green')
+        + renderCat('Связанные домены', scanCategories.related, 'yellow')
+        + renderCat('CDN ресурсы', scanCategories.cdn, 'blue')
+        + renderCat('Внешние', scanCategories.external, 'red');
+    document.getElementById('selectedCount').textContent = selectedDomains.size;
+}
+
+function toggleScanDomain(d) { selectedDomains.has(d) ? selectedDomains.delete(d) : selectedDomains.add(d); renderSubdomainsList(); }
+function selectAllDomains() { scannedSubdomains.forEach(s => selectedDomains.add(s.domain)); renderSubdomainsList(); }
+function selectMainOnly() { selectedDomains.clear(); scannedSubdomains.filter(s=>s.is_main).forEach(s=>selectedDomains.add(s.domain)); renderSubdomainsList(); }
+
+function applySelectedDomains() {
+    if (!selectedDomains.size) { alert('Выберите хотя бы один домен'); return; }
+    const mainD = scannedSubdomains.filter(s=>s.is_main).map(s=>s.domain);
+    const extra = Array.from(selectedDomains).filter(d => !mainD.includes(d)).join(', ');
+    document.getElementById('optExtraDomains').value = extra;
+    document.getElementById('optSubdomains').checked = true;
+    document.getElementById('selectedDomainsInfo').classList.remove('hidden');
+    document.getElementById('selectedDomainsText').textContent = 'Выбрано ' + selectedDomains.size + ' доменов: ' + Array.from(selectedDomains).slice(0,3).join(', ') + (selectedDomains.size > 3 ? '...' : '');
+    closeScanModal();
+    if (startCloningAfterScan) { startCloningAfterScan = false; startCloning(); }
+}
+function closeScanModal() { document.getElementById('scanModal').classList.add('hidden'); }
+
+// =========================================================================
+// SOCKET.IO
+// =========================================================================
+socket.on('connect', () => { loadJobs(); });
+socket.on('job_update', function(data) {
+    jobs.set(data.id, data);
+    updateActiveDownloads();
+    if (['completed','failed','stopped'].includes(data.status)) setTimeout(loadLandings, 1000);
+});
+
+// =========================================================================
+// KEYBOARD
+// =========================================================================
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeViewer(); closeScanModal(); closeSettings(); closeAnalyze(); closeLogModal(); }
+});
+document.getElementById('urlInput') && document.getElementById('urlInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') startCloning();
+});
+
+// =========================================================================
+// INIT
+// =========================================================================
+loadLandings();
+</script>
+</body>
+</html>

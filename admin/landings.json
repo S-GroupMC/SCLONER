@@ -1,0 +1,41 @@
+{
+  "eagles.com_smart/accounts.google.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/www.pinterest.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/www.shopify.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/www.shopifyacademy.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/www.shopifystatus.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/www.tiktok.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/www.vacation.inc": {
+    "excluded": true
+  },
+  "eagles.com_smart/www.youtube-nocookie.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/www.youtube.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/x.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/af.uppromote.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/ajax.googleapis.com": {
+    "excluded": true
+  },
+  "eagles.com_smart/apps.bazaarvoice.com": {
+    "excluded": true
+  }
+}

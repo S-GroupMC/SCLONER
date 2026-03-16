@@ -140,5 +140,60 @@ build-aux/config.rpath
 
 # Downloads folder (cloned sites)
 downloads/
-.windsurfrules
+
+# Node.js
 node_modules/
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+
+# Admin/Backend
+admin/__pycache__/
+admin/venv/
+admin/wget-log
+admin/static/dist/
+admin/static/previews/*.png
+
+# Frontend build
+admin/frontend/node_modules/
+admin/frontend/dist/
+admin/frontend/.vite/
+admin/frontend/package-lock.json
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# WindSurf
+.windsurfrules
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Test files
+test_vue_generation.py
+*.test.js
+*.spec.js
