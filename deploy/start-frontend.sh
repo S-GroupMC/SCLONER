@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Скрипт запуска Black Rabbit Cloner (Vue.js + Flask Backend)
+# Скрипт запуска Black Rabbit Cloner (Vue.js + FastAPI Backend)
 # Использование: ./start-frontend.sh [режим]
 # Режимы: dev (по умолчанию), prod, backend-only, frontend-only
 
@@ -10,8 +10,8 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ADMIN_DIR="$PROJECT_DIR/admin"
 FRONTEND_DIR="$ADMIN_DIR/frontend"
 
-BACKEND_PORT=8888
-FRONTEND_PORT=9000
+BACKEND_PORT=9000
+FRONTEND_PORT=5173
 
 echo "=========================================="
 echo "  🐰 Black Rabbit Cloner"
@@ -36,7 +36,7 @@ trap cleanup SIGINT SIGTERM
 # Функция запуска backend
 start_backend() {
     echo ""
-    echo "📡 Запуск Backend (Flask + SocketIO)..."
+    echo "📡 Запуск Backend (FastAPI + Uvicorn)..."
     echo "   Порт: $BACKEND_PORT"
     
     cd "$ADMIN_DIR"
@@ -59,9 +59,6 @@ start_backend() {
         lsof -ti:$BACKEND_PORT | xargs kill -9 2>/dev/null
         sleep 1
     fi
-    
-    export FLASK_APP=app.py
-    export FLASK_ENV=development
     
     echo "   ✅ Backend запущен на http://localhost:$BACKEND_PORT"
     python app.py &

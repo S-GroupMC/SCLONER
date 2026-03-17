@@ -2,17 +2,13 @@ import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
 
-// Router configuration
+// Simple router - App.vue handles everything via iframe
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
-      path: '/',
-      component: App,
-      props: route => ({
-        landing: {},
-        editorMode: false
-      })
+      path: '/:pathMatch(.*)*',
+      component: App
     }
   ]
 })

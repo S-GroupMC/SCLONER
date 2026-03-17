@@ -1,19 +1,53 @@
 #!/usr/bin/env node
 /**
- * WCLoner Backend Server for Vue Wrapper
+ * WCLoner Backend Server - Universal Template
  * Serves static files from downloaded site
+ * Auto-detects content location in _site folder
  */
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib');
 
-const PORT = parseInt(process.env.PORT || '{{BACKEND_PORT}}', 10);
-const BASE_DIR = path.join(__dirname, '_site');
-const MAIN_DOMAIN = '{{MAIN_DOMAIN}}';
+const PORT = parseInt(process.env.PORT || '3001', 10);
 
-console.log(`[WCLoner Backend] Starting for ${MAIN_DOMAIN}`);
+// Auto-detect content directory
+function findContentDir() {
+  const siteDir = path.join(__dirname, '_site');
+  
+  // Check if _site exists
+  if (!fs.existsSync(siteDir)) {
+    console.error('[WCLoner] ERROR: _site folder not found!');
+    return null;
+  }
+  
+  // Check if index.html directly in _site
+  if (fs.existsSync(path.join(siteDir, 'index.html'))) {
+    return siteDir;
+  }
+  
+  // Search subdirectories for index.html
+  const items = fs.readdirSync(siteDir);
+  for (const item of items) {
+    const itemPath = path.join(siteDir, item);
+    if (fs.statSync(itemPath).isDirectory()) {
+      if (fs.existsSync(path.join(itemPath, 'index.html'))) {
+        return itemPath;
+      }
+    }
+  }
+  
+  // Fallback to _site
+  return siteDir;
+}
+
+const BASE_DIR = findContentDir();
+
+if (!BASE_DIR) {
+  console.error('[WCLoner] Cannot start - no content found');
+  process.exit(1);
+}
+
 console.log(`[WCLoner Backend] Serving from: ${BASE_DIR}`);
 
 const MIME_TYPES = {

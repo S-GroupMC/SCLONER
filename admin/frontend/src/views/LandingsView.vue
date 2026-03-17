@@ -1,7 +1,5 @@
 <template>
   <div>
-    <ActiveDownloads />
-    
     <!-- Секция Артистов из API -->
     <div class="card mb-6">
       <div class="flex items-center justify-between mb-4">
@@ -180,11 +178,25 @@
               
               <td class="px-4 py-3">
                 <span 
-                  v-if="folder.is_active"
+                  v-if="folder.is_active || folder.status === 'downloading'"
                   class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 animate-pulse"
                 >
                   <i class="fas fa-spinner fa-spin mr-1"></i>
                   Скачивается
+                </span>
+                <span 
+                  v-else-if="folder.status === 'prepared'"
+                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800"
+                >
+                  <i class="fas fa-folder-open mr-1"></i>
+                  Подготовлено
+                </span>
+                <span 
+                  v-else-if="folder.status === 'scanned'"
+                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800"
+                >
+                  <i class="fas fa-search mr-1"></i>
+                  Проанализировано
                 </span>
                 <span 
                   v-else-if="folder.job?.status === 'completed'"
@@ -202,7 +214,7 @@
                 </span>
                 <span 
                   v-else
-                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800"
+                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"
                 >
                   <i class="fas fa-check-circle mr-1"></i>
                   Скачано

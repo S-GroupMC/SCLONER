@@ -29,7 +29,15 @@
           </div>
           
           <div class="flex space-x-2">
-            <button @click="openInBrowser" class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow-md hover:shadow-lg transition-all">
+            <!-- Кнопка для prepared/scanned статусов -->
+            <button 
+              v-if="landingMeta?.status === 'prepared' || landingMeta?.status === 'scanned'"
+              @click="continueDownloadWizard"
+              class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 shadow-md hover:shadow-lg transition-all"
+            >
+              <i class="fas fa-play mr-2"></i>Продолжить скачивание
+            </button>
+            <button v-else @click="openInBrowser" class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow-md hover:shadow-lg transition-all">
               <i class="fas fa-external-link-alt mr-2"></i>Открыть
             </button>
             <button @click="redownloadSite" class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 shadow-md hover:shadow-lg transition-all">
@@ -41,6 +49,9 @@
             <button @click="checkChanges" class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 shadow-sm hover:shadow transition-all">
               <i class="fas fa-sync-alt mr-2"></i>Проверить
             </button>
+            <button @click="showHistoryLogs" class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg text-gray-700 bg-gray-100 border border-gray-300 hover:bg-gray-200 shadow-sm hover:shadow transition-all">
+              <i class="fas fa-terminal mr-2"></i>Логи
+            </button>
             <button @click="deleteSite" class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg text-red-700 bg-red-50 border border-red-200 hover:bg-red-100 shadow-sm hover:shadow transition-all">
               <i class="fas fa-trash mr-2"></i>Удалить
             </button>
@@ -48,40 +59,151 @@
         </div>
       </div>
       
+      <!-- Баннер для prepared/scanned статусов -->
+      <div v-if="landingMeta?.status === 'prepared'" class="bg-gradient-to-r from-yellow-500 to-orange-500 rounded-xl shadow-lg p-5">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center text-white">
+            <div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center mr-4">
+              <i class="fas fa-folder-open text-xl"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-lg">Папка подготовлена</h3>
+              <p class="text-white/80 text-sm">Контент ещё не скачан. Запустите анализ и выберите домены для скачивания.</p>
+            </div>
+          </div>
+          <button 
+            @click="continueDownloadWizard"
+            class="px-6 py-3 bg-white text-orange-600 rounded-lg font-bold hover:bg-orange-50 transition-all shadow-lg"
+          >
+            <i class="fas fa-play mr-2"></i>Начать скачивание
+          </button>
+        </div>
+      </div>
+      
+      <div v-else-if="landingMeta?.status === 'scanned'" class="bg-gradient-to-r from-purple-500 to-indigo-500 rounded-xl shadow-lg p-5">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center text-white">
+            <div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center mr-4">
+              <i class="fas fa-search text-xl"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-lg">Сайт проанализирован</h3>
+              <p class="text-white/80 text-sm">
+                Найдено {{ landingMeta.scan_result?.categories?.main?.length || 0 }} основных доменов. 
+                Выберите что скачивать.
+              </p>
+            </div>
+          </div>
+          <button 
+            @click="continueDownloadWizard"
+            class="px-6 py-3 bg-white text-purple-600 rounded-lg font-bold hover:bg-purple-50 transition-all shadow-lg"
+          >
+            <i class="fas fa-download mr-2"></i>Выбрать и скачать
+          </button>
+        </div>
+      </div>
+      
       <!-- Активная загрузка (перекачивание) -->
-      <div v-if="activeJob" class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-lg p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="text-white font-semibold text-sm flex items-center">
-            <i class="fas fa-download mr-2 animate-pulse"></i>
-            Перекачивание сайта
+      <div v-if="activeJob" class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-lg p-5 relative">
+        <!-- Кнопка закрытия -->
+        <button 
+          @click="activeJob = null"
+          class="absolute top-3 right-3 w-8 h-8 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-all"
+          title="Закрыть"
+        >
+          <i class="fas fa-times"></i>
+        </button>
+        
+        <!-- Заголовок -->
+        <div class="flex items-center justify-between mb-4 pr-10">
+          <h3 class="text-white font-bold text-lg flex items-center">
+            <div class="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center mr-3">
+              <i class="fas fa-download" :class="activeJob.status === 'running' ? 'animate-bounce' : ''"></i>
+            </div>
+            {{ activeJob.status === 'completed' ? 'Скачивание завершено' : activeJob.status === 'failed' ? 'Ошибка скачивания' : 'Перекачивание сайта' }}
           </h3>
           <div class="flex items-center space-x-2">
             <button 
-              @click="stopRedownload"
-              class="px-3 py-1 bg-red-500/80 text-white rounded hover:bg-red-600 text-xs"
+              @click="copyJobLogs"
+              class="px-4 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm font-medium transition-all"
+              :title="logsCopied ? 'Скопировано!' : 'Скопировать логи'"
             >
-              <i class="fas fa-stop mr-1"></i>Остановить
+              <i :class="logsCopied ? 'fas fa-check' : 'fas fa-copy'" class="mr-2"></i>{{ logsCopied ? 'Скопировано' : 'Копировать' }}
+            </button>
+            <button 
+              @click="showLogsModal = true"
+              class="px-4 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm font-medium transition-all"
+            >
+              <i class="fas fa-terminal mr-2"></i>Логи ({{ activeJob.logs?.length || 0 }})
+            </button>
+            <button 
+              v-if="activeJob.status === 'running'"
+              @click="stopRedownload"
+              class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm font-medium transition-all"
+            >
+              <i class="fas fa-stop mr-2"></i>Остановить
             </button>
           </div>
         </div>
         
-        <div class="flex items-center space-x-4 mb-3 text-sm text-white/80">
-          <span><i class="fas fa-globe mr-1"></i>{{ siteData.domain }}</span>
-          <span><i class="fas fa-file mr-1"></i>{{ activeJob.files || 0 }} файлов</span>
-          <span><i class="fas fa-hdd mr-1"></i>{{ activeJob.size || '0 B' }}</span>
-        </div>
-        
-        <div class="w-full bg-white/20 rounded-full h-3 mb-2">
-          <div 
-            class="bg-gradient-to-r from-green-400 to-blue-500 h-3 rounded-full transition-all duration-300 flex items-center justify-end pr-2"
-            :style="{ width: Math.max(activeJob.progress || 0, 5) + '%' }"
-          >
-            <span class="text-xs text-white font-bold">{{ activeJob.progress || 0 }}%</span>
+        <!-- Статистика -->
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="bg-white/10 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-white">{{ activeJob.files || 0 }}</div>
+            <div class="text-xs text-white/60">Файлов</div>
+          </div>
+          <div class="bg-white/10 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-white">{{ activeJob.size || '0 B' }}</div>
+            <div class="text-xs text-white/60">Размер</div>
+          </div>
+          <div class="bg-white/10 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-white">{{ activeJob.progress || 0 }}%</div>
+            <div class="text-xs text-white/60">Прогресс</div>
+          </div>
+          <div class="bg-white/10 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-white capitalize">{{ activeJob.status || 'running' }}</div>
+            <div class="text-xs text-white/60">Статус</div>
           </div>
         </div>
         
-        <div class="text-white/60 text-xs truncate font-mono bg-black/20 rounded px-2 py-1">
-          {{ activeJob.lastLog || 'Инициализация...' }}
+        <!-- Прогресс-бар -->
+        <div class="mb-4">
+          <div class="flex justify-between text-xs text-white/70 mb-1">
+            <span>Прогресс загрузки</span>
+            <span>{{ activeJob.progress || 0 }}%</span>
+          </div>
+          <div class="w-full bg-black/30 rounded-full h-4 overflow-hidden">
+            <div 
+              class="h-4 rounded-full transition-all duration-500 relative overflow-hidden"
+              :class="activeJob.progress >= 100 ? 'bg-green-500' : 'bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500'"
+              :style="{ width: Math.max(activeJob.progress || 0, 2) + '%' }"
+            >
+              <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Последние логи (живой вывод) -->
+        <div class="bg-black/30 rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs text-white/50 font-medium">
+              <i class="fas fa-terminal mr-1"></i>Последние действия
+            </span>
+            <span class="text-xs text-white/40">{{ activeJob.logs?.length || 0 }} строк</span>
+          </div>
+          <div class="space-y-1 max-h-32 overflow-y-auto font-mono text-xs">
+            <div 
+              v-for="(line, idx) in (activeJob.logs || []).slice(-5)" 
+              :key="idx"
+              class="py-0.5 px-2 rounded"
+              :class="getLogLineClass(line)"
+            >
+              {{ line }}
+            </div>
+            <div v-if="!activeJob.logs?.length" class="text-white/40 text-center py-2">
+              Ожидание данных...
+            </div>
+          </div>
         </div>
       </div>
       
@@ -200,6 +322,57 @@
             </div>
             <div v-else class="text-sm text-gray-500">
               Проверка не выполнялась
+            </div>
+          </div>
+          
+          <!-- Статус Node.js скриптов и Vue обёртки -->
+          <div class="card">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-semibold text-gray-700 flex items-center">
+                <i class="fas fa-code mr-2 text-green-600"></i>
+                Node.js / Vue обёртка
+              </h3>
+              <button 
+                v-if="!scriptsStatus?.all_ready"
+                @click="generateScripts" 
+                :disabled="generatingScripts"
+                class="text-xs px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                <i class="fas mr-1" :class="generatingScripts ? 'fa-spinner fa-spin' : 'fa-magic'"></i>
+                Сгенерировать
+              </button>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <!-- Vue Wrapper -->
+              <div class="flex items-center space-x-2 p-2 rounded" :class="scriptsStatus?.vue_wrapper?.ready ? 'bg-green-50' : 'bg-gray-50'">
+                <i class="fas" :class="scriptsStatus?.vue_wrapper?.ready ? 'fa-check-circle text-green-500' : 'fa-times-circle text-gray-400'"></i>
+                <span :class="scriptsStatus?.vue_wrapper?.ready ? 'text-green-700' : 'text-gray-500'">Vue обёртка</span>
+              </div>
+              
+              <!-- Backend Server -->
+              <div class="flex items-center space-x-2 p-2 rounded" :class="scriptsStatus?.backend_server?.ready ? 'bg-green-50' : 'bg-gray-50'">
+                <i class="fas" :class="scriptsStatus?.backend_server?.ready ? 'fa-check-circle text-green-500' : 'fa-times-circle text-gray-400'"></i>
+                <span :class="scriptsStatus?.backend_server?.ready ? 'text-green-700' : 'text-gray-500'">Backend сервер</span>
+              </div>
+              
+              <!-- Site Content -->
+              <div class="flex items-center space-x-2 p-2 rounded" :class="scriptsStatus?.site_content?.ready ? 'bg-green-50' : 'bg-gray-50'">
+                <i class="fas" :class="scriptsStatus?.site_content?.ready ? 'fa-check-circle text-green-500' : 'fa-times-circle text-gray-400'"></i>
+                <span :class="scriptsStatus?.site_content?.ready ? 'text-green-700' : 'text-gray-500'">Контент (_site)</span>
+              </div>
+              
+              <!-- NPM Installed -->
+              <div class="flex items-center space-x-2 p-2 rounded" :class="scriptsStatus?.vue_wrapper?.npm_installed ? 'bg-green-50' : 'bg-yellow-50'">
+                <i class="fas" :class="scriptsStatus?.vue_wrapper?.npm_installed ? 'fa-check-circle text-green-500' : 'fa-exclamation-circle text-yellow-500'"></i>
+                <span :class="scriptsStatus?.vue_wrapper?.npm_installed ? 'text-green-700' : 'text-yellow-600'">npm install</span>
+              </div>
+            </div>
+            
+            <!-- Инструкции по запуску -->
+            <div v-if="scriptsStatus?.all_ready" class="mt-3 p-2 bg-blue-50 rounded text-xs">
+              <div class="font-medium text-blue-700 mb-1">Запуск:</div>
+              <code class="block text-blue-600 font-mono">cd {{ folderName }}/vue-app && npm run dev</code>
             </div>
           </div>
         </div>
@@ -453,39 +626,61 @@
             </span>
           </h2>
           <div class="flex items-center space-x-2">
-            <button @click="checkIntegrity" :disabled="integrityLoading" class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-white bg-red-600 hover:bg-red-700 disabled:opacity-50" title="Проверить целостность CSS/JS/чанков">
-              <i class="fas mr-1" :class="integrityLoading ? 'fa-spinner fa-spin' : 'fa-stethoscope'"></i>Целостность
+            <button 
+              @click="checkIntegrity" 
+              :disabled="integrityLoading" 
+              class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 disabled:opacity-50 shadow-sm transition-all" 
+              title="Найти пропущенные CSS, JS, картинки и шрифты"
+            >
+              <i class="fas mr-1.5" :class="integrityLoading ? 'fa-spinner fa-spin' : 'fa-stethoscope'"></i>
+              Проверить целостность
             </button>
-            <button @click="loadFileTree" class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-gray-700 bg-gray-100 hover:bg-gray-200" title="Обновить">
-              <i class="fas fa-sync-alt mr-1"></i>Обновить
+            <button 
+              @click="loadFileTree" 
+              class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 shadow-sm transition-all" 
+              title="Обновить список файлов"
+            >
+              <i class="fas fa-sync-alt mr-1.5"></i>Обновить
             </button>
-            <button @click="toggleAllFolders" class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-gray-700 bg-gray-100 hover:bg-gray-200">
-              <i class="fas fa-expand-arrows-alt mr-1"></i>{{ allExpanded ? 'Свернуть' : 'Развернуть' }}
+            <button 
+              @click="toggleAllFolders" 
+              class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 shadow-sm transition-all"
+              title="Развернуть или свернуть все папки"
+            >
+              <i class="fas fa-expand-arrows-alt mr-1.5"></i>{{ allExpanded ? 'Свернуть всё' : 'Развернуть всё' }}
             </button>
           </div>
         </div>
         
         <!-- Статистика по типам файлов -->
-        <div v-if="fileTreeStats" class="grid grid-cols-5 gap-2 mb-4">
-          <div class="bg-orange-50 rounded-lg px-3 py-2 text-center">
-            <div class="text-lg font-bold text-orange-700">{{ fileTreeStats.html }}</div>
-            <div class="text-xs text-orange-600">HTML</div>
+        <div v-if="fileTreeStats" class="grid grid-cols-6 gap-2 mb-4">
+          <div class="bg-orange-50 rounded-lg px-3 py-2 text-center border border-orange-100">
+            <div class="text-xl font-bold text-orange-700">{{ fileTreeStats.html }}</div>
+            <div class="text-xs text-orange-600 font-medium">HTML</div>
           </div>
-          <div class="bg-blue-50 rounded-lg px-3 py-2 text-center">
-            <div class="text-lg font-bold text-blue-700">{{ fileTreeStats.css }}</div>
-            <div class="text-xs text-blue-600">CSS</div>
+          <div class="bg-blue-50 rounded-lg px-3 py-2 text-center border border-blue-100">
+            <div class="text-xl font-bold text-blue-700">{{ fileTreeStats.css }}</div>
+            <div class="text-xs text-blue-600 font-medium">CSS</div>
           </div>
-          <div class="bg-yellow-50 rounded-lg px-3 py-2 text-center">
-            <div class="text-lg font-bold text-yellow-700">{{ fileTreeStats.js }}</div>
-            <div class="text-xs text-yellow-600">JS</div>
+          <div class="bg-yellow-50 rounded-lg px-3 py-2 text-center border border-yellow-100">
+            <div class="text-xl font-bold text-yellow-700">{{ fileTreeStats.js }}</div>
+            <div class="text-xs text-yellow-600 font-medium">JS</div>
           </div>
-          <div class="bg-green-50 rounded-lg px-3 py-2 text-center">
-            <div class="text-lg font-bold text-green-700">{{ fileTreeStats.images }}</div>
-            <div class="text-xs text-green-600">Картинки</div>
+          <div class="bg-green-50 rounded-lg px-3 py-2 text-center border border-green-100">
+            <div class="text-xl font-bold text-green-700">{{ fileTreeStats.images }}</div>
+            <div class="text-xs text-green-600 font-medium">Картинки</div>
           </div>
-          <div class="bg-gray-50 rounded-lg px-3 py-2 text-center">
-            <div class="text-lg font-bold text-gray-700">{{ fileTreeStats.other }}</div>
-            <div class="text-xs text-gray-600">Другое</div>
+          <div class="bg-gray-50 rounded-lg px-3 py-2 text-center border border-gray-200">
+            <div class="text-xl font-bold text-gray-700">{{ fileTreeStats.other }}</div>
+            <div class="text-xs text-gray-600 font-medium">Другое</div>
+          </div>
+          <div class="rounded-lg px-3 py-2 text-center border" :class="integrityResult?.total_missing > 0 ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-200'">
+            <div class="text-xl font-bold" :class="integrityResult?.total_missing > 0 ? 'text-red-600' : 'text-emerald-600'">
+              {{ integrityResult?.total_missing || 0 }}
+            </div>
+            <div class="text-xs font-medium" :class="integrityResult?.total_missing > 0 ? 'text-red-500' : 'text-emerald-500'">
+              Не скачано
+            </div>
           </div>
         </div>
         
@@ -578,39 +773,93 @@
         
         <!-- Дерево файлов -->
         <div v-if="fileTree && fileTree.children" class="border border-gray-200 rounded-lg overflow-hidden">
+          <!-- Заголовок таблицы -->
+          <div class="flex items-center px-3 py-2 bg-gray-100 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            <div class="w-56 flex-shrink-0 pl-6">Папка / Файл</div>
+            <div class="w-20 flex-shrink-0 px-1 text-center">Тег</div>
+            <div class="w-20 text-center flex-shrink-0">Файлов</div>
+            <div class="w-20 text-right flex-shrink-0">Размер</div>
+            <div class="w-16 text-center flex-shrink-0">HTML</div>
+            <div class="w-24 flex-shrink-0 px-2 text-center">Прогресс</div>
+            <div class="flex-shrink-0 ml-auto text-right">Действия</div>
+          </div>
           <div class="divide-y divide-gray-100">
             <template v-for="node in fileTree.children" :key="node.path">
               <!-- Папка -->
               <div v-if="node.isDir">
                 <div 
                   @click="toggleFolder(node.path)"
-                  class="flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 cursor-pointer select-none transition-colors"
+                  class="flex items-center px-3 py-2.5 bg-gray-50 hover:bg-gray-100 cursor-pointer select-none transition-colors border-b border-gray-100"
                   :style="{ paddingLeft: (node.depth * 16 + 12) + 'px' }"
                 >
-                  <div class="flex items-center space-x-2 min-w-0 flex-1">
-                    <i class="fas text-xs transition-transform" :class="expandedFolders[node.path] ? 'fa-chevron-down text-gray-500' : 'fa-chevron-right text-gray-400'"></i>
+                  <!-- Левая часть: иконка и название -->
+                  <div class="flex items-center space-x-2 min-w-0 w-56 flex-shrink-0">
+                    <i class="fas text-xs transition-transform w-3" :class="expandedFolders[node.path] ? 'fa-chevron-down text-gray-500' : 'fa-chevron-right text-gray-400'"></i>
                     <i class="fas fa-folder text-sm" :class="expandedFolders[node.path] ? 'fa-folder-open text-yellow-500' : 'fa-folder text-yellow-400'"></i>
                     <span class="text-sm font-semibold text-gray-700 truncate">{{ node.name }}</span>
                   </div>
-                  <div class="flex items-center space-x-3 text-xs text-gray-500 flex-shrink-0 ml-2">
+                  
+                  <!-- Тег -->
+                  <div class="w-20 flex-shrink-0 px-1" @click.stop>
                     <select 
                       :value="folderTags[node.path] || ''"
                       @change="setFolderTag(node.path, $event.target.value)"
-                      @click.stop
-                      class="text-xs border rounded px-1 py-0.5 cursor-pointer w-20"
+                      class="text-xs border rounded px-1 py-0.5 cursor-pointer w-full"
                       :class="getFolderTagInfo(folderTags[node.path]).color"
                     >
                       <option v-for="t in folderTagOptions" :key="t.id" :value="t.id">{{ t.label }}</option>
                     </select>
-                    <span>{{ node.fileCount }} файлов</span>
-                    <span class="font-mono">{{ node.sizeFormatted }}</span>
-                    <span v-if="node.htmlCount > 0" class="text-orange-600">{{ node.htmlCount }} html</span>
-                    <div class="flex items-center space-x-1" @click.stop>
-                      <a :href="'/api/browse/' + folderName + '/' + node.path + '/'" target="_blank" class="text-blue-500 hover:text-blue-700" title="Открыть папку"><i class="fas fa-external-link-alt text-xs"></i></a>
-                      <a v-if="node.name.includes('.')" :href="'https://' + node.name" target="_blank" class="text-green-500 hover:text-green-700" title="Оригинал онлайн"><i class="fas fa-globe text-xs"></i></a>
-                      <button @click="checkFolderChanges(node)" class="text-purple-500 hover:text-purple-700" title="Проверить изменения"><i class="fas fa-search text-xs"></i></button>
-                      <button @click="redownloadFolder(node)" class="text-orange-500 hover:text-orange-700" title="Перескачать папку"><i class="fas fa-sync-alt text-xs"></i></button>
+                  </div>
+                  
+                  <!-- Статистика: файлы -->
+                  <div class="w-20 text-center flex-shrink-0">
+                    <span class="text-xs font-medium text-gray-600">{{ node.fileCount }}</span>
+                    <span class="text-xs text-gray-400 ml-0.5">файлов</span>
+                  </div>
+                  
+                  <!-- Размер -->
+                  <div class="w-20 text-right flex-shrink-0">
+                    <span class="text-xs font-mono font-medium text-gray-700">{{ node.sizeFormatted }}</span>
+                  </div>
+                  
+                  <!-- HTML страниц -->
+                  <div class="w-16 text-center flex-shrink-0">
+                    <span v-if="node.htmlCount > 0" class="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">{{ node.htmlCount }} html</span>
+                    <span v-else class="text-xs text-gray-300">—</span>
+                  </div>
+                  
+                  <!-- Прогресс-бар (заглушка - 100% если есть файлы) -->
+                  <div class="w-24 flex-shrink-0 px-2">
+                    <div class="w-full bg-gray-200 rounded-full h-1.5">
+                      <div class="bg-green-500 h-1.5 rounded-full" style="width: 100%"></div>
                     </div>
+                  </div>
+                  
+                  <!-- Кнопки действий -->
+                  <div class="flex items-center space-x-1 flex-shrink-0 ml-auto" @click.stop>
+                    <a 
+                      :href="'/api/browse/' + folderName + '/' + node.path + '/'" 
+                      target="_blank" 
+                      class="p-1.5 rounded hover:bg-blue-100 text-blue-500 hover:text-blue-700 transition-colors" 
+                      title="Открыть папку в браузере"
+                    ><i class="fas fa-external-link-alt text-xs"></i></a>
+                    <a 
+                      v-if="node.name.includes('.')" 
+                      :href="'https://' + node.name" 
+                      target="_blank" 
+                      class="p-1.5 rounded hover:bg-green-100 text-green-500 hover:text-green-700 transition-colors" 
+                      title="Открыть оригинал онлайн"
+                    ><i class="fas fa-globe text-xs"></i></a>
+                    <button 
+                      @click="checkFolderChanges(node)" 
+                      class="p-1.5 rounded hover:bg-purple-100 text-purple-500 hover:text-purple-700 transition-colors" 
+                      title="Проверить изменения на сайте"
+                    ><i class="fas fa-search text-xs"></i></button>
+                    <button 
+                      @click="redownloadFolder(node)" 
+                      class="p-1.5 rounded hover:bg-orange-100 text-orange-500 hover:text-orange-700 transition-colors" 
+                      title="Перескачать эту папку"
+                    ><i class="fas fa-sync-alt text-xs"></i></button>
                   </div>
                 </div>
                 
@@ -980,6 +1229,595 @@
         </div>
       </div>
     </div>
+    
+    <!-- Модальное окно выбора платформы -->
+    <div v-if="showEngineModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showEngineModal = false">
+      <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-gray-900">
+            <i class="fas fa-download mr-2 text-orange-500"></i>Перекачать сайт
+          </h3>
+          <button @click="showEngineModal = false" class="text-gray-400 hover:text-gray-600">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        
+        <p class="text-sm text-gray-600 mb-4">Выберите платформу для скачивания:</p>
+        
+        <div class="grid grid-cols-2 gap-3 mb-6">
+          <label 
+            v-for="engine in engines" 
+            :key="engine.value"
+            class="relative flex flex-col items-center justify-center p-4 border-2 rounded-lg cursor-pointer transition-all"
+            :class="selectedEngine === engine.value 
+              ? 'border-blue-500 bg-blue-50' 
+              : 'border-gray-200 hover:border-gray-300'"
+          >
+            <input 
+              type="radio" 
+              v-model="selectedEngine" 
+              :value="engine.value"
+              class="sr-only"
+            />
+            <i :class="engine.icon" class="text-3xl mb-2" :style="{ color: engine.color }"></i>
+            <div class="font-medium text-sm">{{ engine.label }}</div>
+            <div class="text-xs text-gray-500 mt-1 text-center">{{ engine.desc }}</div>
+          </label>
+        </div>
+        
+        <div class="flex space-x-3">
+          <button 
+            @click="showEngineModal = false" 
+            class="flex-1 px-4 py-2 text-sm font-medium rounded-lg text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+          >
+            Отмена
+          </button>
+          <button 
+            @click="confirmRedownload" 
+            class="flex-1 px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 transition-all"
+          >
+            <i class="fas fa-download mr-2"></i>Перекачать
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Модальное окно открытия сайта -->
+    <div v-if="showOpenModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showOpenModal = false">
+      <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-gray-900">
+            <i class="fas fa-external-link-alt mr-2 text-blue-500"></i>Открыть сайт
+          </h3>
+          <button @click="showOpenModal = false" class="text-gray-400 hover:text-gray-600">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        
+        <p class="text-sm text-gray-600 mb-4">
+          Выберите как открыть сайт:
+        </p>
+        
+        <!-- Опции открытия -->
+        <div class="space-y-3 mb-4">
+          <button 
+            @click="openStaticHtml"
+            class="w-full flex items-start p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left"
+          >
+            <i class="fas fa-file-code text-xl text-orange-500 mr-3 mt-0.5"></i>
+            <div>
+              <div class="font-medium text-gray-900">Статичный HTML</div>
+              <div class="text-xs text-gray-500 mt-1">
+                Открыть index.html напрямую (быстро, без сервера)
+              </div>
+            </div>
+          </button>
+          
+          <button 
+            @click="openVueWrapper"
+            :disabled="!scriptsStatus?.vue_wrapper?.ready || startingServer === 'vue'"
+            class="w-full flex items-start p-3 border rounded-lg transition-colors text-left"
+            :class="scriptsStatus?.vue_wrapper?.ready ? 'border-green-200 hover:bg-green-50' : 'border-gray-200 opacity-50 cursor-not-allowed'"
+          >
+            <div class="relative mr-3 mt-0.5">
+              <i v-if="startingServer === 'vue'" class="fas fa-spinner fa-spin text-xl text-green-500"></i>
+              <i v-else class="fab fa-vuejs text-xl text-green-500"></i>
+              <span v-if="runningServers.vue" class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" title="Сервер запущен"></span>
+            </div>
+            <div class="flex-1">
+              <div class="font-medium text-gray-900 flex items-center">
+                Vue обёртка
+                <span v-if="startingServer === 'vue'" class="ml-2 text-xs text-yellow-600 font-normal">
+                  <i class="fas fa-spinner fa-spin"></i> Запуск...
+                </span>
+                <span v-else-if="runningServers.vue" class="ml-2 text-xs text-green-600 font-normal">
+                  <i class="fas fa-play-circle"></i> :{{ runningServers.vue.port }}
+                </span>
+                <span v-else-if="scriptsStatus?.vue_wrapper?.ready" class="ml-2 text-xs text-green-600">
+                  <i class="fas fa-check-circle"></i> Готово
+                </span>
+                <span v-else class="ml-2 text-xs text-gray-400">
+                  <i class="fas fa-times-circle"></i> Не создано
+                </span>
+              </div>
+              <div class="text-xs text-gray-500 mt-1">
+                {{ startingServer === 'vue' ? 'Установка npm и запуск...' : 'SPA с роутингом и SEO' }}
+              </div>
+            </div>
+          </button>
+          
+          <button 
+            @click="openBackendServer"
+            :disabled="!scriptsStatus?.backend_server?.ready || startingServer === 'backend'"
+            class="w-full flex items-start p-3 border rounded-lg transition-colors text-left"
+            :class="scriptsStatus?.backend_server?.ready ? 'border-blue-200 hover:bg-blue-50' : 'border-gray-200 opacity-50 cursor-not-allowed'"
+          >
+            <div class="relative mr-3 mt-0.5">
+              <i v-if="startingServer === 'backend'" class="fas fa-spinner fa-spin text-xl text-green-600"></i>
+              <i v-else class="fab fa-node-js text-xl text-green-600"></i>
+              <span v-if="runningServers.backend" class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" title="Сервер запущен"></span>
+            </div>
+            <div class="flex-1">
+              <div class="font-medium text-gray-900 flex items-center">
+                Node.js сервер
+                <span v-if="startingServer === 'backend'" class="ml-2 text-xs text-yellow-600 font-normal">
+                  <i class="fas fa-spinner fa-spin"></i> Запуск...
+                </span>
+                <span v-else-if="runningServers.backend" class="ml-2 text-xs text-green-600 font-normal">
+                  <i class="fas fa-play-circle"></i> :{{ runningServers.backend.port }}
+                </span>
+                <span v-else-if="scriptsStatus?.backend_server?.ready" class="ml-2 text-xs text-blue-600">
+                  <i class="fas fa-check-circle"></i> Готово
+                </span>
+                <span v-else class="ml-2 text-xs text-gray-400">
+                  <i class="fas fa-times-circle"></i> Не создано
+                </span>
+              </div>
+              <div class="text-xs text-gray-500 mt-1">
+                {{ startingServer === 'backend' ? 'Запуск сервера...' : 'Сервер статики с CORS' }}
+              </div>
+            </div>
+          </button>
+        </div>
+        
+        <!-- Кнопка генерации если ничего не готово -->
+        <div v-if="!scriptsStatus?.vue_wrapper?.ready && !scriptsStatus?.backend_server?.ready" class="border-t pt-4">
+          <button 
+            @click="showOpenModal = false; generateScripts()"
+            class="w-full px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 transition-all"
+          >
+            <i class="fas fa-magic mr-2"></i>Сгенерировать скрипты
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Модальное окно Backend сервера -->
+    <div v-if="showBackendModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showBackendModal = false">
+      <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-gray-900">
+            <i class="fab fa-node-js mr-2 text-green-600"></i>Запуск Backend сервера
+          </h3>
+          <button @click="showBackendModal = false" class="text-gray-400 hover:text-gray-600">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        
+        <p class="text-sm text-gray-600 mb-4">
+          Запустите Node.js сервер для статики в терминале:
+        </p>
+        
+        <div class="bg-gray-900 rounded-lg p-4 mb-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs text-gray-400">Терминал</span>
+            <button @click="copyBackendCommand" class="text-xs text-blue-400 hover:text-blue-300">
+              <i class="fas fa-copy mr-1"></i>Копировать
+            </button>
+          </div>
+          <code class="text-green-400 font-mono text-sm block">cd {{ siteData.path }}</code>
+          <code class="text-green-400 font-mono text-sm block mt-1">node backend-server.js</code>
+        </div>
+        
+        <div class="bg-blue-50 rounded-lg p-3 mb-4">
+          <div class="text-sm text-blue-800">
+            <i class="fas fa-info-circle mr-2"></i>
+            После запуска откройте: <strong>http://localhost:3001</strong>
+          </div>
+        </div>
+        
+        <div class="flex space-x-3">
+          <button 
+            @click="showBackendModal = false" 
+            class="flex-1 px-4 py-2 text-sm font-medium rounded-lg text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+          >
+            Закрыть
+          </button>
+          <button 
+            @click="copyBackendCommand(); showBackendModal = false"
+            class="flex-1 px-4 py-2 text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+          >
+            <i class="fas fa-copy mr-2"></i>Копировать и закрыть
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Модальное окно npm install -->
+    <div v-if="showNpmInstallModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showNpmInstallModal = false">
+      <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-gray-900">
+            <i class="fas fa-terminal mr-2 text-yellow-500"></i>Требуется npm install
+          </h3>
+          <button @click="showNpmInstallModal = false" class="text-gray-400 hover:text-gray-600">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        
+        <p class="text-sm text-gray-600 mb-4">
+          Для запуска Vue обёртки необходимо установить зависимости. Выполните команды в терминале:
+        </p>
+        
+        <div class="bg-gray-900 rounded-lg p-4 mb-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs text-gray-400">Терминал</span>
+            <button @click="copyNpmCommand" class="text-xs text-blue-400 hover:text-blue-300">
+              <i class="fas fa-copy mr-1"></i>Копировать
+            </button>
+          </div>
+          <code class="text-green-400 font-mono text-sm block">cd {{ siteData.path }}/vue-app</code>
+          <code class="text-green-400 font-mono text-sm block mt-1">npm install</code>
+          <code class="text-green-400 font-mono text-sm block mt-1">npm run dev</code>
+        </div>
+        
+        <div class="flex space-x-3">
+          <button 
+            @click="showNpmInstallModal = false" 
+            class="flex-1 px-4 py-2 text-sm font-medium rounded-lg text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+          >
+            Закрыть
+          </button>
+          <button 
+            @click="copyNpmCommand(); showNpmInstallModal = false"
+            class="flex-1 px-4 py-2 text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+          >
+            <i class="fas fa-copy mr-2"></i>Копировать и закрыть
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Модальное окно генерации скриптов -->
+    <div v-if="showScriptsModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showScriptsModal = false">
+      <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-gray-900">
+            <i class="fas fa-code mr-2 text-green-500"></i>Генерация скриптов
+          </h3>
+          <button @click="showScriptsModal = false" class="text-gray-400 hover:text-gray-600">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        
+        <p class="text-sm text-gray-600 mb-4">
+          Выберите что сгенерировать для запуска сайта:
+        </p>
+        
+        <!-- Опции генерации -->
+        <div class="space-y-3 mb-6">
+          <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors" :class="scriptsOptions.vueWrapper ? 'border-green-500 bg-green-50' : 'border-gray-200'">
+            <input type="checkbox" v-model="scriptsOptions.vueWrapper" class="mt-0.5 mr-3">
+            <div>
+              <div class="font-medium text-gray-900 flex items-center">
+                <i class="fab fa-vuejs mr-2 text-green-500"></i>Vue обёртка
+              </div>
+              <div class="text-xs text-gray-500 mt-1">
+                SPA приложение с iframe, SEO-оптимизация, роутинг
+              </div>
+            </div>
+          </label>
+          
+          <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors" :class="scriptsOptions.backendServer ? 'border-blue-500 bg-blue-50' : 'border-gray-200'">
+            <input type="checkbox" v-model="scriptsOptions.backendServer" class="mt-0.5 mr-3">
+            <div>
+              <div class="font-medium text-gray-900 flex items-center">
+                <i class="fab fa-node-js mr-2 text-green-600"></i>Backend сервер
+              </div>
+              <div class="text-xs text-gray-500 mt-1">
+                Node.js сервер для статики, CORS, проксирование
+              </div>
+            </div>
+          </label>
+          
+          <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors" :class="scriptsOptions.moveToSite ? 'border-purple-500 bg-purple-50' : 'border-gray-200'">
+            <input type="checkbox" v-model="scriptsOptions.moveToSite" class="mt-0.5 mr-3">
+            <div>
+              <div class="font-medium text-gray-900 flex items-center">
+                <i class="fas fa-folder-open mr-2 text-yellow-500"></i>Переместить в _site
+              </div>
+              <div class="text-xs text-gray-500 mt-1">
+                Переместить скачанный контент в папку _site
+              </div>
+            </div>
+          </label>
+        </div>
+        
+        <!-- Порт -->
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">Порт сервера</label>
+          <input type="number" v-model="scriptsOptions.port" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500">
+        </div>
+        
+        <div class="flex space-x-3">
+          <button 
+            @click="showScriptsModal = false" 
+            class="flex-1 px-4 py-2 text-sm font-medium rounded-lg text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+          >
+            Отмена
+          </button>
+          <button 
+            @click="confirmGenerateScripts" 
+            :disabled="generatingScripts || (!scriptsOptions.vueWrapper && !scriptsOptions.backendServer)"
+            class="flex-1 px-4 py-2 text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 transition-colors"
+          >
+            <i class="fas mr-2" :class="generatingScripts ? 'fa-spinner fa-spin' : 'fa-magic'"></i>
+            Сгенерировать
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Модальное окно логов -->
+    <div v-if="showLogsModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showLogsModal = false">
+      <div class="bg-gray-900 rounded-xl shadow-2xl p-4 w-full max-w-4xl mx-4 max-h-[80vh] flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-lg font-bold text-white flex items-center">
+            <i class="fas fa-terminal mr-2 text-green-400"></i>Логи загрузки
+          </h3>
+          <div class="flex items-center space-x-2">
+            <button 
+              @click="copyLogs" 
+              class="px-3 py-1.5 text-xs font-medium rounded text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+            >
+              <i class="fas fa-copy mr-1"></i>{{ logsCopied ? 'Скопировано!' : 'Копировать' }}
+            </button>
+            <button @click="showLogsModal = false" class="text-gray-400 hover:text-white">
+              <i class="fas fa-times text-lg"></i>
+            </button>
+          </div>
+        </div>
+        
+        <div 
+          ref="logsContainer"
+          class="flex-1 overflow-y-auto bg-black rounded-lg p-3 font-mono text-xs text-green-400 min-h-[300px] max-h-[60vh]"
+        >
+          <div v-for="(line, index) in currentLogs" :key="index" class="py-0.5 hover:bg-white/5">
+            <span class="text-gray-500 mr-2 select-none">{{ String(index + 1).padStart(4, ' ') }}</span>
+            <span :class="getLogLineClass(line)">{{ line }}</span>
+          </div>
+          <div v-if="!currentLogs.length" class="text-gray-500 text-center py-10">
+            Логи пока пусты...
+          </div>
+        </div>
+        
+        <div class="mt-3 flex items-center justify-between text-xs text-gray-400">
+          <span>Строк: {{ currentLogs.length }}</span>
+          <label class="flex items-center cursor-pointer">
+            <input type="checkbox" v-model="autoScrollLogs" class="mr-1.5">
+            Автопрокрутка
+          </label>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Модальное окно wizard скачивания - ВЫНЕСЕНО за пределы v-else -->
+    <Teleport to="body">
+      <div v-if="showDownloadWizard" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="closeWizard">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col" @click.stop>
+          <!-- Header -->
+          <div class="flex items-center justify-between p-5 border-b">
+            <h3 class="text-lg font-bold text-gray-900 flex items-center">
+              <i class="fas fa-download mr-2 text-blue-500"></i>
+              {{ wizardStep === 1 ? 'Анализ сайта' : wizardStep === 2 ? 'Выбор доменов' : 'Скачивание' }}
+            </h3>
+            <button @click="closeWizard" class="text-gray-400 hover:text-gray-600">
+              <i class="fas fa-times text-lg"></i>
+            </button>
+          </div>
+          
+          <!-- Step 1: Scanning -->
+          <div v-if="wizardStep === 1" class="p-5 flex-1 overflow-y-auto">
+            <div class="bg-gray-50 rounded-lg p-6 text-center">
+              <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-search text-2xl text-blue-600 animate-pulse"></i>
+              </div>
+              <h4 class="text-lg font-bold text-gray-900 mb-2">Анализируем сайт...</h4>
+              <p class="text-sm text-gray-600 mb-4">Ищем поддомены и ресурсы</p>
+              
+              <div class="w-full bg-gray-200 rounded-full h-3 mb-2">
+                <div 
+                  class="bg-gradient-to-r from-blue-500 to-purple-500 h-3 rounded-full transition-all duration-300"
+                  :style="{ width: scanProgress + '%' }"
+                ></div>
+              </div>
+              <div class="text-sm text-gray-500">
+                {{ scanProgress }}% — {{ scanPagesScanned }} страниц просканировано
+              </div>
+            </div>
+          </div>
+          
+          <!-- Step 2: Select Domains -->
+          <div v-else-if="wizardStep === 2" class="p-5 flex-1 overflow-y-auto">
+            <!-- Quick stats -->
+            <div class="grid grid-cols-4 gap-3 mb-4">
+              <div class="bg-green-50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-green-600">{{ scanResult?.categories?.main?.length || 0 }}</div>
+                <div class="text-xs text-green-700">Основные</div>
+              </div>
+              <div class="bg-blue-50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-blue-600">{{ scanResult?.categories?.related?.length || 0 }}</div>
+                <div class="text-xs text-blue-700">Связанные</div>
+              </div>
+              <div class="bg-yellow-50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-yellow-600">{{ scanResult?.categories?.cdn?.length || 0 }}</div>
+                <div class="text-xs text-yellow-700">CDN</div>
+              </div>
+              <div class="bg-gray-50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-gray-600">{{ scanResult?.categories?.external?.length || 0 }}</div>
+                <div class="text-xs text-gray-700">Внешние</div>
+              </div>
+            </div>
+            
+            <!-- Quick actions -->
+            <div class="flex items-center justify-between bg-gray-50 rounded-lg p-3 mb-4">
+              <div class="text-sm text-gray-600">
+                Выбрано: <span class="font-bold text-blue-600">{{ selectedDomainsCount }}</span>
+              </div>
+              <div class="flex space-x-2 text-sm">
+                <button @click="selectAllDomains('main')" class="text-green-600 hover:underline">Все основные</button>
+                <button @click="selectAllDomains('cdn')" class="text-yellow-600 hover:underline">+ CDN</button>
+                <button @click="deselectAllDomains" class="text-gray-500 hover:underline">Сбросить</button>
+              </div>
+            </div>
+            
+            <!-- Domain lists -->
+            <div class="space-y-3 max-h-[40vh] overflow-y-auto">
+              <!-- Main domains -->
+              <div v-if="scanResult?.categories?.main?.length" class="border rounded-lg overflow-hidden">
+                <div class="bg-green-50 px-3 py-2 border-b flex items-center justify-between">
+                  <span class="font-medium text-green-800 text-sm">
+                    <i class="fas fa-globe mr-1"></i>Основные ({{ scanResult.categories.main.length }})
+                  </span>
+                  <label class="flex items-center cursor-pointer text-xs">
+                    <input type="checkbox" :checked="allDomainsSelected('main')" @change="toggleDomainCategory('main')" class="mr-1">
+                    Все
+                  </label>
+                </div>
+                <div class="divide-y max-h-32 overflow-y-auto">
+                  <div v-for="d in scanResult.categories.main" :key="d.domain" class="flex items-center px-3 py-2 hover:bg-gray-50 text-sm">
+                    <input type="checkbox" v-model="selectedDomains[d.domain]" class="mr-2">
+                    <span class="flex-1">{{ d.domain }}</span>
+                    <span v-if="d.is_main" class="px-1.5 py-0.5 text-xs bg-green-100 text-green-700 rounded mr-2">Главный</span>
+                    <select 
+                      v-model="domainEngines[d.domain]" 
+                      class="text-xs border rounded px-1 py-0.5 mr-2 bg-white"
+                      @click.stop
+                    >
+                      <option v-for="e in engines" :key="e.value" :value="e.value">{{ e.label }}</option>
+                    </select>
+                    <span class="text-xs text-gray-400">{{ d.count }}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- CDN domains -->
+              <div v-if="scanResult?.categories?.cdn?.length" class="border rounded-lg overflow-hidden">
+                <div class="bg-yellow-50 px-3 py-2 border-b flex items-center justify-between">
+                  <span class="font-medium text-yellow-800 text-sm">
+                    <i class="fas fa-cloud mr-1"></i>CDN ({{ scanResult.categories.cdn.length }})
+                  </span>
+                  <label class="flex items-center cursor-pointer text-xs">
+                    <input type="checkbox" :checked="allDomainsSelected('cdn')" @change="toggleDomainCategory('cdn')" class="mr-1">
+                    Все
+                  </label>
+                </div>
+                <div class="divide-y max-h-24 overflow-y-auto">
+                  <div v-for="d in scanResult.categories.cdn" :key="d.domain" class="flex items-center px-3 py-2 hover:bg-gray-50 text-sm">
+                    <input type="checkbox" v-model="selectedDomains[d.domain]" class="mr-2">
+                    <span class="flex-1 truncate">{{ d.domain }}</span>
+                    <select 
+                      v-model="domainEngines[d.domain]" 
+                      class="text-xs border rounded px-1 py-0.5 mr-2 bg-white"
+                      @click.stop
+                    >
+                      <option v-for="e in engines" :key="e.value" :value="e.value">{{ e.label }}</option>
+                    </select>
+                    <span class="text-xs text-gray-400">{{ d.count }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Download options -->
+            <div class="mt-4 pt-4 border-t">
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">Движок</label>
+                  <select v-model="selectedEngine" class="input text-sm">
+                    <option v-for="e in engines" :key="e.value" :value="e.value">{{ e.label }}</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">Глубина</label>
+                  <input v-model.number="downloadDepth" type="number" min="1" max="10" class="input text-sm">
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Step 3: Downloading -->
+          <div v-else-if="wizardStep === 3" class="p-5 flex-1 overflow-y-auto">
+            <div class="bg-blue-50 rounded-lg p-6 text-center">
+              <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-download text-2xl text-blue-600 animate-bounce"></i>
+              </div>
+              <h4 class="text-lg font-bold text-gray-900 mb-2">Скачивание запущено!</h4>
+              <p class="text-sm text-gray-600">Прогресс отображается на странице</p>
+            </div>
+          </div>
+          
+          <!-- Footer -->
+          <div class="p-4 border-t flex justify-between">
+            <button 
+              @click="closeWizard" 
+              class="px-4 py-2 text-sm font-medium rounded-lg text-gray-700 bg-gray-100 hover:bg-gray-200"
+            >
+              {{ wizardStep === 3 ? 'Закрыть' : 'Отмена' }}
+            </button>
+            <button 
+              v-if="wizardStep === 2"
+              @click="startSelectedDownload"
+              :disabled="selectedDomainsCount === 0"
+              class="px-6 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 disabled:opacity-50"
+            >
+              <i class="fas fa-download mr-2"></i>Скачать ({{ selectedDomainsCount }})
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+    
+    <!-- Toast Notifications -->
+    <Teleport to="body">
+      <div class="fixed top-4 right-4 z-[9999] space-y-2 max-w-md">
+        <TransitionGroup name="toast">
+          <div
+            v-for="toast in toasts"
+            :key="toast.id"
+            :class="[
+              'px-4 py-3 rounded-lg shadow-lg flex items-start space-x-3 backdrop-blur-sm',
+              toast.type === 'success' ? 'bg-green-500/90 text-white' : '',
+              toast.type === 'error' ? 'bg-red-500/90 text-white' : '',
+              toast.type === 'warning' ? 'bg-yellow-500/90 text-white' : '',
+              toast.type === 'info' ? 'bg-blue-500/90 text-white' : ''
+            ]"
+          >
+            <i :class="[
+              'mt-0.5',
+              toast.type === 'success' ? 'fas fa-check-circle' : '',
+              toast.type === 'error' ? 'fas fa-exclamation-circle' : '',
+              toast.type === 'warning' ? 'fas fa-exclamation-triangle' : '',
+              toast.type === 'info' ? 'fas fa-info-circle' : ''
+            ]"></i>
+            <span class="text-sm flex-1">{{ toast.message }}</span>
+            <button @click="toasts = toasts.filter(t => t.id !== toast.id)" class="text-white/70 hover:text-white">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </TransitionGroup>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -995,6 +1833,7 @@ const landingsStore = useLandingsStore()
 const loading = ref(true)
 const error = ref(null)
 const siteData = ref({})
+const landingMeta = ref(null)
 const sortBy = ref('tag')
 const filterTag = ref('')
 const onlyRelevant = ref(false)
@@ -1016,6 +1855,66 @@ const thumbnailUrl = ref(null)
 const thumbnailError = ref(false)
 const generatingThumb = ref(false)
 const activeJob = ref(null)
+const showEngineModal = ref(false)
+const selectedEngine = ref('wget2')
+const showLogsModal = ref(false)
+const logsCopied = ref(false)
+const autoScrollLogs = ref(true)
+const logsContainer = ref(null)
+const historyLogs = ref([])
+const scriptsStatus = ref(null)
+const generatingScripts = ref(false)
+const showScriptsModal = ref(false)
+const showOpenModal = ref(false)
+const showNpmInstallModal = ref(false)
+const showBackendModal = ref(false)
+const startingServer = ref(null)  // 'vue' | 'backend' | null
+const runningServers = ref({ vue: false, backend: false })
+
+// Toast notifications system
+const toasts = ref([])
+let toastId = 0
+
+function showToast(message, type = 'info', duration = 4000) {
+  const id = ++toastId
+  toasts.value.push({ id, message, type })
+  if (duration > 0) {
+    setTimeout(() => {
+      toasts.value = toasts.value.filter(t => t.id !== id)
+    }, duration)
+  }
+}
+
+function showSuccess(message) { showToast(message, 'success') }
+function showError(message) { showToast(message, 'error', 6000) }
+function showInfo(message) { showToast(message, 'info') }
+function showWarning(message) { showToast(message, 'warning', 5000) }
+const scriptsOptions = ref({
+  vueWrapper: true,
+  backendServer: true,
+  moveToSite: true,
+  port: 3000
+})
+
+// Download wizard state
+const showDownloadWizard = ref(false)
+const wizardStep = ref(1) // 1: scanning, 2: select domains, 3: downloading
+const scanId = ref(null)
+const scanProgress = ref(0)
+const scanPagesScanned = ref(0)
+const scanCurrentUrl = ref('')
+const scanResult = ref(null)
+const scanStatus = ref('idle') // idle, running, completed
+const selectedDomains = ref({})
+const domainEngines = ref({}) // Движок для каждого домена: { 'domain.com': 'wget2' }
+const downloadDepth = ref(5)
+
+const engines = [
+  { value: 'wget2', label: 'wget2', icon: 'fas fa-bolt', color: '#3b82f6', desc: 'Быстрый, HTTP/2' },
+  { value: 'puppeteer', label: 'Puppeteer', icon: 'fas fa-robot', color: '#8b5cf6', desc: 'JS-рендеринг' },
+  { value: 'httrack', label: 'HTTrack', icon: 'fas fa-layer-group', color: '#f59e0b', desc: 'Классический' },
+  { value: 'smart', label: 'Smart', icon: 'fas fa-brain', color: '#10b981', desc: 'Все движки' }
+]
 
 const folderTagOptions = [
   { id: '', label: '--', color: 'text-gray-400', bg: '' },
@@ -1036,6 +1935,14 @@ const availableTags = [
 ]
 
 const folderName = computed(() => route.params.folder)
+
+const currentLogs = computed(() => {
+  // Если есть активная задача - показываем её логи, иначе историю
+  if (activeJob.value?.logs?.length) {
+    return activeJob.value.logs
+  }
+  return historyLogs.value
+})
 
 const previewUrl = computed(() => {
   if (!folderName.value) return null
@@ -1327,7 +2234,7 @@ function getOriginalUrl(filePath) {
 async function redownloadPage(file) {
   const originalUrl = getOriginalUrl(file.path)
   if (!originalUrl) {
-    alert('Не удалось определить URL оригинала.')
+    showError('Не удалось определить URL оригинала')
     return
   }
   if (!confirm(`Перескачать "${file.name}"?\n\nURL: ${originalUrl}`)) return
@@ -1344,12 +2251,12 @@ async function redownloadPage(file) {
     })
     const data = await response.json()
     if (data.id) {
-      alert(`Перескачивание запущено!\nJob ID: ${data.id}`)
+      showSuccess(`Перескачивание запущено! Job ID: ${data.id}`)
     } else {
-      alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'))
+      showError(data.error || 'Неизвестная ошибка')
     }
   } catch (err) {
-    alert('Ошибка: ' + err.message)
+    showError(err.message)
   }
 }
 
@@ -1367,7 +2274,7 @@ async function checkAllChanges() {
     const data = await response.json()
     changesData.value = data
   } catch (err) {
-    alert('Ошибка проверки: ' + err.message)
+    showError('Ошибка проверки: ' + err.message)
   } finally {
     changesLoading.value = false
   }
@@ -1390,11 +2297,11 @@ async function updateAllChanged() {
       body: JSON.stringify({ paths })
     })
     const data = await response.json()
-    alert(`Обновлено: ${data.downloaded} / ${data.total}\n${data.failed > 0 ? 'Ошибок: ' + data.failed : ''}`)
+    showSuccess(`Обновлено: ${data.downloaded} / ${data.total}${data.failed > 0 ? ', ошибок: ' + data.failed : ''}`)
     // Refresh changes
     await checkAllChanges()
   } catch (err) {
-    alert('Ошибка: ' + err.message)
+    showError(err.message)
   } finally {
     updatingPages.value = false
   }
@@ -1415,10 +2322,10 @@ async function updateSinglePage(page) {
       changesData.value.changed--
       changesData.value.unchanged++
     } else {
-      alert('Не удалось обновить: ' + (data.errors?.[0] || 'Неизвестная ошибка'))
+      showError('Не удалось обновить: ' + (data.errors?.[0] || 'Неизвестная ошибка'))
     }
   } catch (err) {
-    alert('Ошибка: ' + err.message)
+    showError(err.message)
   }
 }
 
@@ -1431,36 +2338,41 @@ async function generateThumbnail() {
       thumbnailUrl.value = `/api/thumbnail/${folderName.value}?t=${Date.now()}`
       thumbnailError.value = false
     } else {
-      alert('Не удалось создать скриншот: ' + (data.error || 'Неизвестная ошибка'))
+      showError('Не удалось создать скриншот: ' + (data.error || 'Неизвестная ошибка'))
     }
   } catch (err) {
-    alert('Ошибка: ' + err.message)
+    showError(err.message)
   } finally {
     generatingThumb.value = false
   }
 }
 
-async function redownloadSite() {
-  if (!confirm('Перекачать весь сайт? Это удалит текущую версию и скачает заново.')) return
+function redownloadSite() {
+  // Устанавливаем текущий движок сайта как выбранный по умолчанию
+  selectedEngine.value = siteData.value.engine || 'wget2'
+  showEngineModal.value = true
+}
+
+async function confirmRedownload() {
+  showEngineModal.value = false
   
   try {
     const response = await fetch(`/api/downloads/${folderName.value}/restart`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        engine: siteData.value.engine || 'smart'
+        engine: selectedEngine.value
       })
     })
     const data = await response.json()
     if (data.id) {
       activeJob.value = { id: data.id, progress: 0 }
       pollJobProgress(data.id)
-      alert('Перекачивание запущено!')
     } else {
-      alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'))
+      showError(data.error || 'Неизвестная ошибка')
     }
   } catch (err) {
-    alert('Ошибка: ' + err.message)
+    showError(err.message)
   }
 }
 
@@ -1471,7 +2383,11 @@ function pollJobProgress(jobId) {
   
   pollInterval = setInterval(async () => {
     try {
-      const response = await fetch(`/api/status/${jobId}`)
+      const response = await fetch(`/api/jobs/${jobId}`)
+      if (!response.ok) {
+        console.error('Job not found:', jobId)
+        return
+      }
       const data = await response.json()
       
       activeJob.value = {
@@ -1479,21 +2395,91 @@ function pollJobProgress(jobId) {
         progress: data.progress || 0,
         files: data.files_downloaded || 0,
         size: data.total_size || '0 B',
-        lastLog: data.output_lines?.slice(-1)[0] || 'Скачивание...'
+        lastLog: data.output_lines?.slice(-1)[0] || 'Скачивание...',
+        logs: data.output_lines || [],
+        status: data.status
+      }
+      
+      // Автопрокрутка логов
+      if (autoScrollLogs.value && logsContainer.value) {
+        logsContainer.value.scrollTop = logsContainer.value.scrollHeight
       }
       
       if (data.status === 'completed' || data.status === 'failed' || data.status === 'stopped') {
         clearInterval(pollInterval)
         pollInterval = null
-        activeJob.value = null
-        loadSiteData()
+        
+        // Show completion message
+        if (data.status === 'completed') {
+          showSuccess(`Скачивание завершено! Файлов: ${data.files_downloaded || 0}`)
+        } else if (data.status === 'failed') {
+          showError('Скачивание не удалось')
+        }
+        
+        // Reload site data but keep activeJob visible until user closes
+        loadSiteData(false)
       }
     } catch (err) {
-      clearInterval(pollInterval)
-      pollInterval = null
-      activeJob.value = null
+      console.error('Poll error:', err)
     }
-  }, 1500)
+  }, 1000)
+}
+
+function copyJobLogs() {
+  if (!activeJob.value?.logs?.length) {
+    showWarning('Нет логов для копирования')
+    return
+  }
+  const text = activeJob.value.logs.join('\n')
+  navigator.clipboard.writeText(text).then(() => {
+    logsCopied.value = true
+    showSuccess('Логи скопированы в буфер обмена')
+    setTimeout(() => { logsCopied.value = false }, 2000)
+  })
+}
+
+function copyLogs() {
+  const logs = activeJob.value?.logs?.length ? activeJob.value.logs : historyLogs.value
+  if (!logs.length) return
+  const text = logs.join('\n')
+  navigator.clipboard.writeText(text).then(() => {
+    logsCopied.value = true
+    setTimeout(() => { logsCopied.value = false }, 2000)
+  })
+}
+
+function getLogLineClass(line) {
+  if (!line) return 'text-green-400'
+  if (line.includes('Error') || line.includes('error') || line.includes('❌')) return 'text-red-400'
+  if (line.includes('Warning') || line.includes('warning') || line.includes('⚠️')) return 'text-yellow-400'
+  if (line.includes('✅') || line.includes('completed') || line.includes('Done')) return 'text-green-400'
+  if (line.includes('Downloading') || line.includes('Скачивание')) return 'text-blue-400'
+  if (line.startsWith('[')) return 'text-cyan-400'
+  return 'text-gray-300'
+}
+
+async function showHistoryLogs() {
+  // Загружаем логи последней задачи для этого сайта
+  try {
+    const response = await fetch('/api/jobs')
+    const jobs = await response.json()
+    
+    // Ищем последнюю задачу для этого сайта
+    const siteJobs = jobs.filter(j => 
+      j.folder_name === folderName.value || 
+      j.url?.includes(siteData.value.domain)
+    ).sort((a, b) => new Date(b.started_at || 0) - new Date(a.started_at || 0))
+    
+    if (siteJobs.length > 0 && siteJobs[0].output_lines) {
+      historyLogs.value = siteJobs[0].output_lines
+    } else {
+      historyLogs.value = ['Логи не найдены для этого сайта']
+    }
+    showLogsModal.value = true
+  } catch (err) {
+    historyLogs.value = ['Ошибка загрузки логов: ' + err.message]
+    showLogsModal.value = true
+  }
 }
 
 async function stopRedownload() {
@@ -1501,20 +2487,21 @@ async function stopRedownload() {
   if (!confirm('Остановить перекачивание?')) return
   
   try {
-    await fetch(`/api/stop/${activeJob.value.id}`, { method: 'POST' })
+    await fetch(`/api/jobs/${activeJob.value.id}/stop`, { method: 'POST' })
     if (pollInterval) {
       clearInterval(pollInterval)
       pollInterval = null
     }
     activeJob.value = null
   } catch (err) {
-    alert('Ошибка: ' + err.message)
+    showError(err.message)
   }
 }
 
 function loadThumbnail() {
-  // Check if thumbnail exists
-  thumbnailUrl.value = `/api/thumbnail/${folderName.value}`
+  // Reset error state and load thumbnail
+  thumbnailError.value = false
+  thumbnailUrl.value = `/api/thumbnail/${folderName.value}?t=${Date.now()}`
 }
 
 function goToSubdomainFiles(subdomain) {
@@ -1561,11 +2548,11 @@ async function checkFolderChanges(folderNode) {
   collectHtml(folderNode)
   
   if (htmlFiles.length === 0) {
-    alert(`Папка "${folderNode.name}" не содержит HTML файлов для проверки.`)
+    showWarning(`Папка "${folderNode.name}" не содержит HTML файлов`)
     return
   }
   
-  alert(`Проверяю ${htmlFiles.length} HTML файлов в "${folderNode.name}"...`)
+  showInfo(`Проверяю ${htmlFiles.length} HTML файлов...`)
   
   let changed = 0
   let errors = 0
@@ -1583,7 +2570,7 @@ async function checkFolderChanges(folderNode) {
     }
   }
   
-  alert(`Проверка "${folderNode.name}":\n\nВсего HTML: ${htmlFiles.length}\nИзменено: ${changed}\nАктуально: ${upToDate}\nОшибок: ${errors}`)
+  showInfo(`Проверка: ${htmlFiles.length} файлов, изменено: ${changed}, актуально: ${upToDate}`)
 }
 
 async function redownloadFolder(folderNode) {
@@ -1599,7 +2586,7 @@ async function redownloadFolder(folderNode) {
   collectHtml(folderNode)
   
   if (htmlFiles.length === 0) {
-    alert(`Папка "${folderNode.name}" не содержит HTML файлов.`)
+    showWarning(`Папка "${folderNode.name}" не содержит HTML файлов`)
     return
   }
   
@@ -1613,10 +2600,10 @@ async function redownloadFolder(folderNode) {
       body: JSON.stringify({ paths })
     })
     const data = await response.json()
-    alert(`Перескачано: ${data.downloaded} / ${data.total}\n${data.failed > 0 ? 'Ошибок: ' + data.failed : ''}`)
+    showSuccess(`Перескачано: ${data.downloaded} / ${data.total}${data.failed > 0 ? ', ошибок: ' + data.failed : ''}`)
     if (data.downloaded > 0) loadFileTree()
   } catch (err) {
-    alert('Ошибка: ' + err.message)
+    showError(err.message)
   }
 }
 
@@ -1629,7 +2616,7 @@ async function checkIntegrity() {
     const data = await response.json()
     integrityResult.value = data
   } catch (err) {
-    alert('Ошибка проверки целостности: ' + err.message)
+    showError('Ошибка проверки целостности: ' + err.message)
   } finally {
     integrityLoading.value = false
   }
@@ -1655,7 +2642,7 @@ async function downloadAllMissing() {
       loadFileTree()
     }
   } catch (err) {
-    alert('Ошибка докачки: ' + err.message)
+    showError('Ошибка докачки: ' + err.message)
   } finally {
     downloadingMissing.value = false
   }
@@ -1670,7 +2657,7 @@ async function downloadSingleMissing(path) {
     })
     const data = await response.json()
     if (data.downloaded > 0) {
-      alert(`Скачан: ${path}`)
+      showSuccess(`Скачан: ${path}`)
       // Remove from missing list
       if (integrityResult.value && integrityResult.value.missing) {
         integrityResult.value.missing = integrityResult.value.missing.filter(m => m.path !== path)
@@ -1678,10 +2665,10 @@ async function downloadSingleMissing(path) {
         integrityResult.value.is_complete = integrityResult.value.missing.length === 0
       }
     } else {
-      alert(`Не удалось скачать: ${path}\n${data.results?.[0]?.error || ''}`)
+      showError(`Не удалось скачать: ${path}`)
     }
   } catch (err) {
-    alert('Ошибка: ' + err.message)
+    showError(err.message)
   }
 }
 
@@ -1735,8 +2722,10 @@ const statusText = computed(() => {
   return 'Скачано'
 })
 
-async function loadSiteData() {
-  loading.value = true
+async function loadSiteData(showLoading = true) {
+  if (showLoading) {
+    loading.value = true
+  }
   error.value = null
   
   try {
@@ -1747,7 +2736,11 @@ async function loadSiteData() {
       const folder = domain.folders.find(f => f.folder_name === folderName.value)
       if (folder) {
         siteData.value = folder
+        landingMeta.value = folder.landing_meta || null
         loading.value = false
+        // Загрузить статус скриптов
+        loadScriptsStatus()
+        loadServersStatus()
         return
       }
     }
@@ -1760,7 +2753,284 @@ async function loadSiteData() {
   }
 }
 
-async function openInBrowser() {
+function closeWizard() {
+  showDownloadWizard.value = false
+  // Clear activeJob only if completed/failed
+  if (activeJob.value && (activeJob.value.status === 'completed' || activeJob.value.status === 'failed')) {
+    activeJob.value = null
+  }
+}
+
+function continueDownloadWizard() {
+  // Открываем wizard прямо здесь
+  showDownloadWizard.value = true
+  
+  // Если уже есть результат сканирования - показываем выбор доменов
+  if (landingMeta.value?.scan_result) {
+    scanResult.value = landingMeta.value.scan_result
+    scanStatus.value = 'completed'
+    wizardStep.value = 2
+    
+    // Pre-select main domains and set default engine
+    initDomainEngines(scanResult.value)
+    if (scanResult.value.categories?.main) {
+      scanResult.value.categories.main.forEach(d => {
+        if (d.is_main) {
+          selectedDomains.value[d.domain] = true
+        }
+      })
+    }
+  } else {
+    // Запускаем сканирование
+    wizardStep.value = 1
+    startScan()
+  }
+}
+
+async function startScan() {
+  scanStatus.value = 'running'
+  scanProgress.value = 0
+  scanPagesScanned.value = 0
+  
+  try {
+    const res = await fetch('/api/scan-async', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: landingMeta.value?.url || `https://${siteData.value.domain}`,
+        folder_name: folderName.value,
+        max_pages: 30
+      })
+    })
+    
+    const data = await res.json()
+    if (res.ok) {
+      scanId.value = data.scan_id
+      pollScanProgress()
+    } else {
+      showError('Ошибка запуска анализа: ' + data.error)
+    }
+  } catch (err) {
+    showError(err.message)
+  }
+}
+
+async function pollScanProgress() {
+  if (!scanId.value) return
+  if (scanStatus.value === 'completed' && wizardStep.value === 2) return
+  
+  try {
+    const res = await fetch(`/api/scan-status/${scanId.value}`)
+    const data = await res.json()
+    
+    scanProgress.value = data.progress || 0
+    scanPagesScanned.value = data.pages_scanned || 0
+    
+    if (data.status === 'completed' && data.result) {
+      scanStatus.value = 'completed'
+      scanResult.value = data.result
+      wizardStep.value = 2
+      
+      // Init domain engines and pre-select main domains
+      initDomainEngines(data.result)
+      if (data.result.categories?.main) {
+        data.result.categories.main.forEach(d => {
+          if (d.is_main) {
+            selectedDomains.value[d.domain] = true
+          }
+        })
+      }
+      
+      // Reload landing meta in background without showing loading spinner
+      loadSiteData(false)
+    } else if (data.status === 'running') {
+      setTimeout(pollScanProgress, 1000)
+    } else {
+      // Unknown status, keep polling
+      setTimeout(pollScanProgress, 1000)
+    }
+  } catch (err) {
+    console.error('Poll error:', err)
+    setTimeout(pollScanProgress, 2000)
+  }
+}
+
+function getSelectedDomainsList() {
+  return Object.entries(selectedDomains.value)
+    .filter(([_, v]) => v)
+    .map(([k, _]) => k)
+}
+
+// Инициализация движков для всех доменов (по умолчанию selectedEngine)
+function initDomainEngines(result) {
+  if (!result?.categories) return
+  const defaultEngine = selectedEngine.value || 'wget2'
+  
+  // Main domains
+  if (result.categories.main) {
+    result.categories.main.forEach(d => {
+      if (!domainEngines.value[d.domain]) {
+        domainEngines.value[d.domain] = defaultEngine
+      }
+    })
+  }
+  // CDN domains
+  if (result.categories.cdn) {
+    result.categories.cdn.forEach(d => {
+      if (!domainEngines.value[d.domain]) {
+        domainEngines.value[d.domain] = defaultEngine
+      }
+    })
+  }
+  // Related domains
+  if (result.categories.related) {
+    result.categories.related.forEach(d => {
+      if (!domainEngines.value[d.domain]) {
+        domainEngines.value[d.domain] = defaultEngine
+      }
+    })
+  }
+}
+
+// Получить список выбранных доменов с их движками
+function getSelectedDomainsWithEngines() {
+  return Object.entries(selectedDomains.value)
+    .filter(([_, v]) => v)
+    .map(([domain, _]) => ({
+      domain,
+      engine: domainEngines.value[domain] || selectedEngine.value || 'wget2'
+    }))
+}
+
+const selectedDomainsCount = computed(() => {
+  return Object.values(selectedDomains.value).filter(v => v).length
+})
+
+function selectAllDomains(category) {
+  if (!scanResult.value?.categories?.[category]) return
+  scanResult.value.categories[category].forEach(d => {
+    selectedDomains.value[d.domain] = true
+  })
+}
+
+function deselectAllDomains() {
+  Object.keys(selectedDomains.value).forEach(k => {
+    selectedDomains.value[k] = false
+  })
+}
+
+function allDomainsSelected(category) {
+  if (!scanResult.value?.categories?.[category]) return false
+  return scanResult.value.categories[category].every(d => selectedDomains.value[d.domain])
+}
+
+function toggleDomainCategory(category) {
+  const all = allDomainsSelected(category)
+  scanResult.value.categories[category].forEach(d => {
+    selectedDomains.value[d.domain] = !all
+  })
+}
+
+async function startSelectedDownload() {
+  const selected = getSelectedDomainsList()
+  const domainsWithEngines = getSelectedDomainsWithEngines()
+  
+  if (selected.length === 0) {
+    showWarning('Выберите хотя бы один домен')
+    return
+  }
+  
+  wizardStep.value = 3
+  
+  try {
+    const res = await fetch('/api/start-download-selected', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folder_name: folderName.value,
+        url: landingMeta.value?.url || `https://${siteData.value.domain}`,
+        selected_domains: selected,
+        domains_with_engines: domainsWithEngines, // Домены с индивидуальными движками
+        engine: selectedEngine.value, // Движок по умолчанию
+        options: {
+          depth: downloadDepth.value
+        }
+      })
+    })
+    
+    const data = await res.json()
+    if (res.ok && (data.id || data.job_id)) {
+      const jobId = data.id || data.job_id
+      activeJob.value = { id: jobId, progress: 0, status: 'running' }
+      
+      // Close wizard and show progress bar at top of page
+      showDownloadWizard.value = false
+      
+      // Start polling for progress
+      pollJobProgress(jobId)
+    } else {
+      showError(data.error || data.detail?.error || 'Неизвестная ошибка')
+      wizardStep.value = 2
+    }
+  } catch (err) {
+    showError(err.message)
+    wizardStep.value = 2
+  }
+}
+
+async function loadScriptsStatus() {
+  try {
+    const response = await fetch(`/api/downloads/${folderName.value}/scripts-status`)
+    if (response.ok) {
+      scriptsStatus.value = await response.json()
+    }
+  } catch (err) {
+    console.error('Ошибка загрузки статуса скриптов:', err)
+  }
+}
+
+function generateScripts() {
+  // Открываем попап выбора опций
+  showScriptsModal.value = true
+}
+
+async function confirmGenerateScripts() {
+  showScriptsModal.value = false
+  generatingScripts.value = true
+  
+  try {
+    const response = await fetch(`/api/downloads/${folderName.value}/generate-scripts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        port: scriptsOptions.value.port,
+        vue_wrapper: scriptsOptions.value.vueWrapper,
+        backend_server: scriptsOptions.value.backendServer,
+        move_to_site: scriptsOptions.value.moveToSite
+      })
+    })
+    const data = await response.json()
+    
+    if (data.success) {
+      showSuccess('Скрипты созданы!')
+      loadScriptsStatus()
+    } else {
+      showError(data.error || 'Неизвестная ошибка')
+    }
+  } catch (err) {
+    showError('Ошибка генерации: ' + err.message)
+  } finally {
+    generatingScripts.value = false
+  }
+}
+
+function openInBrowser() {
+  // Открываем попап выбора платформы
+  showOpenModal.value = true
+}
+
+async function openStaticHtml() {
+  showOpenModal.value = false
   try {
     const response = await fetch(`/api/find-index/${folderName.value}`)
     const data = await response.json()
@@ -1768,10 +3038,78 @@ async function openInBrowser() {
     if (data.index_path) {
       window.open(`/api/browse/${folderName.value}/${data.index_path}`, '_blank')
     } else {
-      alert('Не найден index.html файл')
+      showWarning('Не найден index.html файл')
     }
   } catch (err) {
-    alert('Ошибка открытия сайта: ' + err.message)
+    showError('Ошибка открытия сайта: ' + err.message)
+  }
+}
+
+async function openVueWrapper() {
+  // НЕ закрываем попап - показываем прогресс
+  startingServer.value = 'vue'
+  
+  try {
+    const response = await fetch(`/api/downloads/${folderName.value}/start-vue`, { method: 'POST' })
+    const data = await response.json()
+    
+    if (data.success) {
+      runningServers.value.vue = { port: data.port, pid: data.pid, url: data.url }
+      showOpenModal.value = false
+      window.open(data.url, '_blank')
+    } else {
+      showError('Ошибка запуска Vue: ' + (data.error || 'Неизвестная ошибка'))
+    }
+  } catch (err) {
+    showError(err.message)
+  } finally {
+    startingServer.value = null
+  }
+}
+
+async function openBackendServer() {
+  // НЕ закрываем попап - показываем прогресс
+  startingServer.value = 'backend'
+  
+  try {
+    const response = await fetch(`/api/downloads/${folderName.value}/start-backend`, { method: 'POST' })
+    const data = await response.json()
+    
+    if (data.success) {
+      runningServers.value.backend = { port: data.port, pid: data.pid, url: data.url }
+      showOpenModal.value = false
+      window.open(data.url, '_blank')
+    } else {
+      showError('Ошибка запуска Backend: ' + (data.error || 'Неизвестная ошибка'))
+    }
+  } catch (err) {
+    showError(err.message)
+  } finally {
+    startingServer.value = null
+  }
+}
+
+async function loadServersStatus() {
+  try {
+    const response = await fetch(`/api/downloads/${folderName.value}/servers-status`)
+    if (response.ok) {
+      const data = await response.json()
+      runningServers.value = {
+        vue: data.vue || false,
+        backend: data.backend || false
+      }
+    }
+  } catch (err) {
+    console.error('Error loading servers status:', err)
+  }
+}
+
+async function stopAllServers() {
+  try {
+    await fetch(`/api/downloads/${folderName.value}/stop-servers`, { method: 'POST' })
+    runningServers.value = { vue: false, backend: false }
+  } catch (err) {
+    console.error('Error stopping servers:', err)
   }
 }
 
@@ -1807,12 +3145,12 @@ async function downloadSubdomain(subdomain) {
     })
     const data = await response.json()
     if (data.id) {
-      alert(`Скачивание запущено!\nJob ID: ${data.id}\nURL: ${url}`)
+      showSuccess(`Скачивание запущено! URL: ${url}`)
     } else {
-      alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'))
+      showError(data.error || 'Неизвестная ошибка')
     }
   } catch (err) {
-    alert('Ошибка запуска скачивания: ' + err.message)
+    showError('Ошибка запуска скачивания: ' + err.message)
   }
 }
 
@@ -1832,19 +3170,19 @@ async function redownloadSubdomain(subdomain) {
     })
     const data = await response.json()
     if (data.id) {
-      alert(`Перескачивание запущено!\nJob ID: ${data.id}\nURL: ${url}`)
+      showSuccess(`Перескачивание запущено! URL: ${url}`)
     } else {
-      alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'))
+      showError(data.error || 'Неизвестная ошибка')
     }
   } catch (err) {
-    alert('Ошибка запуска перескачивания: ' + err.message)
+    showError('Ошибка запуска перескачивания: ' + err.message)
   }
 }
 
 async function checkPageChanges(page) {
   const origUrl = page.originalUrl || getOriginalUrl(page.path)
   if (!origUrl) {
-    alert('Не удалось определить URL оригинала для этой страницы.')
+    showError('Не удалось определить URL оригинала')
     return
   }
   
@@ -1873,9 +3211,9 @@ async function checkPageChanges(page) {
       message += 'Изменений не обнаружено.\nЛокальная версия актуальна.'
     }
     
-    alert(message)
+    showInfo(result.has_changes ? 'Обнаружены изменения на сайте' : 'Изменений не обнаружено')
   } catch (err) {
-    alert('Ошибка проверки: ' + err.message)
+    showError('Ошибка проверки: ' + err.message)
   }
 }
 
@@ -1901,9 +3239,9 @@ async function checkSubdomainChanges(subdomain) {
       message += 'Изменений не обнаружено.\nЛокальная версия актуальна.'
     }
     
-    alert(message)
+    showInfo(result.has_changes ? 'Обнаружены изменения на сайте' : 'Изменений не обнаружено')
   } catch (err) {
-    alert('Ошибка проверки: ' + err.message)
+    showError('Ошибка проверки: ' + err.message)
   }
 }
 
@@ -1992,9 +3330,9 @@ async function checkChanges() {
       message += '✅ Изменений не обнаружено\n\nЛокальная версия актуальна.'
     }
     
-    alert(message)
+    showInfo(result.has_changes ? 'Обнаружены изменения на сайте' : 'Изменений не обнаружено')
   } catch (err) {
-    alert('Ошибка проверки: ' + err.message)
+    showError('Ошибка проверки: ' + err.message)
   }
 }
 
@@ -2007,7 +3345,33 @@ async function deleteSite() {
     await landingsStore.deleteFolder(folderName.value)
     router.push('/landings')
   } catch (err) {
-    alert('Ошибка удаления: ' + err.message)
+    showError('Ошибка удаления: ' + err.message)
+  }
+}
+
+async function checkActiveJobs() {
+  try {
+    const response = await fetch('/api/jobs')
+    const jobs = await response.json()
+    
+    // Find running job for this folder
+    const runningJob = jobs.find(j => 
+      j.status === 'running' && 
+      j.output_dir?.includes(folderName.value)
+    )
+    
+    if (runningJob) {
+      activeJob.value = {
+        id: runningJob.id,
+        progress: runningJob.progress || 0,
+        files: runningJob.files_downloaded || 0,
+        size: runningJob.total_size || '0 B',
+        status: runningJob.status
+      }
+      pollJobProgress(runningJob.id)
+    }
+  } catch (err) {
+    console.error('Error checking active jobs:', err)
   }
 }
 
@@ -2016,5 +3380,31 @@ onMounted(async () => {
   loadThumbnail()
   await loadSiteData()
   loadFileTree()
+  
+  // Check for active download jobs
+  await checkActiveJobs()
+  
+  // No automatic actions - user must manually click buttons to start any downloads/scans
+  // Clear any wizard parameter from URL
+  if (route.query.wizard) {
+    router.replace({ path: route.path, query: {} })
+  }
 })
 </script>
+
+<style scoped>
+.toast-enter-active {
+  transition: all 0.3s ease-out;
+}
+.toast-leave-active {
+  transition: all 0.2s ease-in;
+}
+.toast-enter-from {
+  opacity: 0;
+  transform: translateX(100%);
+}
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(100%);
+}
+</style>
