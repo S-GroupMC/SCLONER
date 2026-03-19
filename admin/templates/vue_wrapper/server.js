@@ -2,7 +2,7 @@
 /**
  * WCLoner Backend Server - Universal Template
  * Serves static files from downloaded site
- * Auto-detects content location in _site folder
+ * Works directly with project folder (no _site duplication)
  */
 
 const http = require('http');
@@ -11,25 +11,24 @@ const path = require('path');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
+// Directories to exclude from serving
+const EXCLUDE_DIRS = ['vue-app', 'node_modules', '_wcloner', '.git'];
+const EXCLUDE_FILES = ['backend-server.js', 'package.json', 'package-lock.json', 'README.md', 'README-VUE.md'];
+
 // Auto-detect content directory
 function findContentDir() {
-  const siteDir = path.join(__dirname, '_site');
+  const projectDir = __dirname;
   
-  // Check if _site exists
-  if (!fs.existsSync(siteDir)) {
-    console.error('[WCLoner] ERROR: _site folder not found!');
-    return null;
+  // Check if index.html directly in project root
+  if (fs.existsSync(path.join(projectDir, 'index.html'))) {
+    return projectDir;
   }
   
-  // Check if index.html directly in _site
-  if (fs.existsSync(path.join(siteDir, 'index.html'))) {
-    return siteDir;
-  }
-  
-  // Search subdirectories for index.html
-  const items = fs.readdirSync(siteDir);
+  // Search subdirectories for index.html (domain folders like eagles.com/)
+  const items = fs.readdirSync(projectDir);
   for (const item of items) {
-    const itemPath = path.join(siteDir, item);
+    if (EXCLUDE_DIRS.includes(item)) continue;
+    const itemPath = path.join(projectDir, item);
     if (fs.statSync(itemPath).isDirectory()) {
       if (fs.existsSync(path.join(itemPath, 'index.html'))) {
         return itemPath;
@@ -37,8 +36,8 @@ function findContentDir() {
     }
   }
   
-  // Fallback to _site
-  return siteDir;
+  // Fallback to project root
+  return projectDir;
 }
 
 const BASE_DIR = findContentDir();
@@ -75,21 +74,43 @@ function getContentType(filePath) {
 }
 
 function findFile(urlPath) {
-  urlPath = urlPath.split('?')[0];
-  let filePath = path.join(BASE_DIR, urlPath);
+  const queryIndex = urlPath.indexOf('?');
+  const basePath = queryIndex > -1 ? urlPath.substring(0, queryIndex) : urlPath;
+  const queryPart = queryIndex > -1 ? urlPath.substring(queryIndex) : '';
+  
+  let filePath = path.join(BASE_DIR, basePath);
   
   if (!filePath.startsWith(BASE_DIR)) return null;
   
+  // Direct file exists
   if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
     return filePath;
   }
   
+  // Try with .html extension (for paths like /pages/home -> /pages/home.html)
+  if (fs.existsSync(filePath + '.html')) {
+    return filePath + '.html';
+  }
+  
+  // Directory with index.html
   if (fs.existsSync(path.join(filePath, 'index.html'))) {
     return path.join(filePath, 'index.html');
   }
   
-  if (fs.existsSync(filePath + '.html')) {
-    return filePath + '.html';
+  // Try with URL-encoded query params in filename (wget2 saves files this way)
+  if (queryPart) {
+    const dir = path.dirname(filePath);
+    const fileName = path.basename(filePath);
+    
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        // Match files like "base.css%3Fv=123.css" when requesting "base.css?v=123"
+        if (file.startsWith(fileName) && file.includes('%3F')) {
+          return path.join(dir, file);
+        }
+      }
+    }
   }
   
   return null;
@@ -126,8 +147,23 @@ const server = http.createServer((req, res) => {
     return;
   }
   
-  const content = fs.readFileSync(filePath);
+  let content = fs.readFileSync(filePath);
   const mimeType = getContentType(filePath);
+  
+  // Rewrite external URLs to local for HTML files
+  if (mimeType.includes('text/html')) {
+    let html = content.toString('utf-8');
+    // Get domain from project folder name (e.g., /downloads/eagles.com -> eagles.com)
+    const projectDirName = path.basename(path.dirname(BASE_DIR === __dirname ? BASE_DIR : path.dirname(BASE_DIR)));
+    const domainMatch = projectDirName.match(/^([a-z0-9-]+\.[a-z]{2,})/i);
+    if (domainMatch) {
+      const domain = domainMatch[1];
+      // Replace //domain/ and https://domain/ with local /
+      const domainRegex = new RegExp(`(https?:)?//${domain.replace(/\./g, '\\.')}/`, 'g');
+      html = html.replace(domainRegex, '/');
+    }
+    content = Buffer.from(html, 'utf-8');
+  }
   
   res.writeHead(200, {
     'Content-Type': mimeType,
@@ -139,5 +175,5 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n[WCLoner Backend] Running on http://localhost:${PORT}`);
-  console.log(`[WCLoner Backend] Serving: ${MAIN_DOMAIN}\n`);
+  console.log(`[WCLoner Backend] Serving: ${path.basename(BASE_DIR)}\n`);
 });

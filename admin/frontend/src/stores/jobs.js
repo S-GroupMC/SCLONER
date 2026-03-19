@@ -14,9 +14,26 @@ export const useJobsStore = defineStore('jobs', () => {
       .filter(j => ['completed', 'failed', 'stopped'].includes(j.status))
   })
   
+  let pollInterval = null
+  
   function initSocket() {
-    // WebSocket отключен - просто загружаем задачи
+    // Загружаем задачи и запускаем периодическое обновление
     loadJobs()
+    startPolling()
+  }
+  
+  function startPolling() {
+    if (pollInterval) return
+    pollInterval = setInterval(() => {
+      loadJobs()
+    }, 3000) // Обновляем каждые 3 секунды
+  }
+  
+  function stopPolling() {
+    if (pollInterval) {
+      clearInterval(pollInterval)
+      pollInterval = null
+    }
   }
   
   async function loadJobs() {
@@ -97,6 +114,8 @@ export const useJobsStore = defineStore('jobs', () => {
     stopJob,
     pauseJob,
     resumeJob,
-    getJob
+    getJob,
+    startPolling,
+    stopPolling
   }
 })

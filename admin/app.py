@@ -41,7 +41,7 @@ from modules.file_manager import (
 )
 from modules.server_manager import (
     get_domain_ports, find_free_port, is_port_in_use, check_process_running,
-    get_servers_status, start_vue_server, start_backend_server, stop_servers
+    get_servers_status, start_vue_server, start_backend_server, stop_servers, stop_vue_server
 )
 
 # FastAPI app
@@ -699,7 +699,9 @@ async def get_scripts_status(folder_name):
     
     vue_dir = folder_path / 'vue-app'
     backend_server = folder_path / 'backend-server.js'
-    site_dir = folder_path / '_site'
+    
+    # Check for HTML content (in root or domain subdirectories)
+    has_content = any(folder_path.glob('*.html')) or any(folder_path.glob('*/*.html'))
     
     return {
         'vue_wrapper': {
@@ -710,7 +712,7 @@ async def get_scripts_status(folder_name):
             'ready': backend_server.exists()
         },
         'site_content': {
-            'ready': site_dir.exists() or any(folder_path.glob('*.html'))
+            'ready': has_content
         }
     }
 
@@ -729,11 +731,6 @@ async def get_thumbnail_alt(folder_name):
     preview_path = folder_path / 'preview.png'
     if preview_path.exists():
         return FileResponse(preview_path, media_type='image/png')
-    
-    # Try _site/preview.png
-    site_preview = folder_path / '_site' / 'preview.png'
-    if site_preview.exists():
-        return FileResponse(site_preview, media_type='image/png')
     
     raise HTTPException(status_code=404, detail={'error': 'No preview available'})
 
@@ -768,7 +765,6 @@ async def browse_file(folder_name, filepath: str):
     # Try multiple locations
     possible_paths = [
         folder_path / filepath,
-        folder_path / '_site' / filepath,
         folder_path / folder_name / filepath,  # domain subfolder
     ]
     
@@ -835,6 +831,12 @@ async def start_backend_server_endpoint(folder_name):
 @app.post('/api/downloads/{folder_name}/stop-servers')
 async def stop_servers_endpoint(folder_name):
     return stop_servers(folder_name)
+
+
+@app.post('/api/downloads/{folder_name}/stop-vue')
+async def stop_vue_server_endpoint(folder_name):
+    """Stop only Vue server for this folder"""
+    return stop_vue_server(folder_name)
 
 
 @app.post('/api/downloads/{folder_name}/generate-scripts')

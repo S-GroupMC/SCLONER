@@ -1,5 +1,40 @@
 <template>
   <div v-if="activeJobs.length > 0" class="mb-6">
+    <!-- Confirm Modal -->
+    <Teleport to="body">
+      <div v-if="confirmModal.show" class="fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/50" @click="confirmModal.show = false"></div>
+        <div class="relative bg-white rounded-xl shadow-2xl p-6 max-w-md w-full mx-4">
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">{{ confirmModal.title }}</h3>
+          <p class="text-gray-600 mb-6">{{ confirmModal.message }}</p>
+          <div class="flex justify-end space-x-3">
+            <button @click="confirmModal.show = false" class="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg">
+              Отмена
+            </button>
+            <button @click="confirmModal.onConfirm(); confirmModal.show = false" class="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg">
+              {{ confirmModal.confirmText }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Log Modal -->
+    <Teleport to="body">
+      <div v-if="logModal.show" class="fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/50" @click="logModal.show = false"></div>
+        <div class="relative bg-gray-900 rounded-xl shadow-2xl p-6 max-w-3xl w-full mx-4 max-h-[80vh] flex flex-col">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-white">{{ logModal.title }}</h3>
+            <button @click="logModal.show = false" class="text-gray-400 hover:text-white">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <pre class="text-green-400 text-xs font-mono bg-black/50 rounded-lg p-4 overflow-auto flex-1">{{ logModal.content }}</pre>
+        </div>
+      </div>
+    </Teleport>
+
     <div class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-lg p-4">
       <h3 class="text-white font-semibold text-sm mb-3 flex items-center">
         <i class="fas fa-download mr-2 animate-pulse"></i>
@@ -87,12 +122,35 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import { useJobsStore } from '../stores/jobs'
 
 const jobsStore = useJobsStore()
 
 const activeJobs = computed(() => jobsStore.activeJobs)
+
+// Custom modals
+const confirmModal = reactive({
+  show: false,
+  title: '',
+  message: '',
+  confirmText: 'Остановить',
+  onConfirm: () => {}
+})
+
+const logModal = reactive({
+  show: false,
+  title: '',
+  content: ''
+})
+
+function showConfirm(title, message, onConfirm, confirmText = 'Остановить') {
+  confirmModal.title = title
+  confirmModal.message = message
+  confirmModal.confirmText = confirmText
+  confirmModal.onConfirm = onConfirm
+  confirmModal.show = true
+}
 
 function getStatusIcon(status) {
   const icons = {
@@ -137,9 +195,11 @@ function resumeJob(jobId) {
 }
 
 function stopJob(jobId) {
-  if (confirm('Остановить загрузку?')) {
-    jobsStore.stopJob(jobId)
-  }
+  showConfirm(
+    'Остановить загрузку?',
+    'Загрузка будет прервана. Вы уверены?',
+    () => jobsStore.stopJob(jobId)
+  )
 }
 
 function getProgress(job) {
@@ -153,13 +213,15 @@ function getProgress(job) {
 }
 
 function showLog(job) {
-  let logText = `Log: ${job.url}\n\n`
+  let logText = ''
   if (job.output_lines && job.output_lines.length > 0) {
-    const lastLines = job.output_lines.slice(-30)
-    logText += lastLines.join('\n')
+    const lastLines = job.output_lines.slice(-50)
+    logText = lastLines.join('\n')
   } else {
-    logText += 'Log pust'
+    logText = 'Лог пуст'
   }
-  alert(logText)
+  logModal.title = `[Process] Log file: ${job.log_file || job.url}`
+  logModal.content = logText
+  logModal.show = true
 }
 </script>

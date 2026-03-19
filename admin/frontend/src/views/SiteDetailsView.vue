@@ -745,7 +745,7 @@
                 <tbody class="divide-y divide-red-100">
                   <tr v-for="item in integrityResult.missing" :key="item.path" class="hover:bg-red-100/50">
                     <td class="px-2 py-1 font-mono text-red-800 truncate max-w-xs" :title="item.path">{{ item.path }}</td>
-                    <td class="px-2 py-1 text-gray-600 truncate max-w-xs" :title="item.referenced_by.join(', ')">{{ item.referenced_by[0] }}{{ item.referenced_by.length > 1 ? ` (+${item.referenced_by.length - 1})` : '' }}</td>
+                    <td class="px-2 py-1 text-gray-600 truncate max-w-xs" :title="item.referenced_by?.join(', ') || ''">{{ item.referenced_by?.[0] || '-' }}{{ (item.referenced_by?.length || 0) > 1 ? ` (+${item.referenced_by.length - 1})` : '' }}</td>
                     <td class="px-2 py-1 text-right text-gray-500">{{ item.ref_count }}</td>
                     <td class="px-2 py-1 text-right">
                       <button 
@@ -1344,6 +1344,16 @@
                 {{ startingServer === 'vue' ? 'Установка npm и запуск...' : 'SPA с роутингом и SEO' }}
               </div>
             </div>
+            <!-- Кнопка перезапуска Vue сервера -->
+            <button 
+              v-if="runningServers.vue"
+              @click.stop="restartVueServer"
+              :disabled="restartingVue"
+              class="ml-2 px-2 py-1 text-xs rounded bg-yellow-100 hover:bg-yellow-200 text-yellow-700 transition-colors"
+              title="Перезапустить Vue сервер"
+            >
+              <i :class="restartingVue ? 'fas fa-spinner fa-spin' : 'fas fa-sync-alt'"></i>
+            </button>
           </button>
           
           <button 
@@ -1818,11 +1828,30 @@
         </TransitionGroup>
       </div>
     </Teleport>
+
+    <!-- Confirm Modal -->
+    <Teleport to="body">
+      <div v-if="confirmModal.show" class="fixed inset-0 z-[60] flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/50" @click="confirmModal.show = false"></div>
+        <div class="relative bg-white rounded-xl shadow-2xl p-6 max-w-md w-full mx-4">
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">{{ confirmModal.title }}</h3>
+          <p class="text-gray-600 mb-6 whitespace-pre-wrap">{{ confirmModal.message }}</p>
+          <div class="flex justify-end space-x-3">
+            <button @click="confirmModal.show = false" class="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
+              Отмена
+            </button>
+            <button @click="confirmModal.onConfirm(); confirmModal.show = false" class="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+              {{ confirmModal.confirmText }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useLandingsStore } from '../stores/landings'
 
@@ -1870,6 +1899,7 @@ const showNpmInstallModal = ref(false)
 const showBackendModal = ref(false)
 const startingServer = ref(null)  // 'vue' | 'backend' | null
 const runningServers = ref({ vue: false, backend: false })
+const restartingVue = ref(false)
 
 // Toast notifications system
 const toasts = ref([])
@@ -1889,6 +1919,24 @@ function showSuccess(message) { showToast(message, 'success') }
 function showError(message) { showToast(message, 'error', 6000) }
 function showInfo(message) { showToast(message, 'info') }
 function showWarning(message) { showToast(message, 'warning', 5000) }
+
+// Custom confirm modal
+const confirmModal = reactive({
+  show: false,
+  title: '',
+  message: '',
+  confirmText: 'Подтвердить',
+  onConfirm: () => {}
+})
+
+function showConfirm(title, message, onConfirm, confirmText = 'Подтвердить') {
+  confirmModal.title = title
+  confirmModal.message = message
+  confirmModal.confirmText = confirmText
+  confirmModal.onConfirm = onConfirm
+  confirmModal.show = true
+}
+
 const scriptsOptions = ref({
   vueWrapper: true,
   backendServer: true,
@@ -2237,27 +2285,27 @@ async function redownloadPage(file) {
     showError('Не удалось определить URL оригинала')
     return
   }
-  if (!confirm(`Перескачать "${file.name}"?\n\nURL: ${originalUrl}`)) return
-  
-  try {
-    const response = await fetch('/api/landings/redownload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url: originalUrl,
-        folder_name: folderName.value,
-        config_key: ''
+  showConfirm('Перескачать файл?', `Перескачать "${file.name}"?\n\nURL: ${originalUrl}`, async () => {
+    try {
+      const response = await fetch('/api/landings/redownload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: originalUrl,
+          folder_name: folderName.value,
+          config_key: ''
+        })
       })
-    })
-    const data = await response.json()
-    if (data.id) {
-      showSuccess(`Перескачивание запущено! Job ID: ${data.id}`)
-    } else {
-      showError(data.error || 'Неизвестная ошибка')
+      const data = await response.json()
+      if (data.id) {
+        showSuccess(`Перескачивание запущено! Job ID: ${data.id}`)
+      } else {
+        showError(data.error || 'Неизвестная ошибка')
+      }
+    } catch (err) {
+      showError(err.message)
     }
-  } catch (err) {
-    showError(err.message)
-  }
+  })
 }
 
 const filteredChangesPages = computed(() => {
@@ -2280,31 +2328,30 @@ async function checkAllChanges() {
   }
 }
 
-async function updateAllChanged() {
+function updateAllChanged() {
   if (!changesData.value) return
   const changedPages = changesData.value.pages.filter(p => p.has_changes)
   if (changedPages.length === 0) return
   
-  if (!confirm(`Обновить ${changedPages.length} изменённых страниц?`)) return
-  
-  updatingPages.value = true
-  const paths = changedPages.map(p => p.page)
-  
-  try {
-    const response = await fetch(`/api/download-missing/${folderName.value}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths })
-    })
-    const data = await response.json()
-    showSuccess(`Обновлено: ${data.downloaded} / ${data.total}${data.failed > 0 ? ', ошибок: ' + data.failed : ''}`)
-    // Refresh changes
-    await checkAllChanges()
-  } catch (err) {
-    showError(err.message)
-  } finally {
-    updatingPages.value = false
-  }
+  showConfirm('Обновить страницы?', `Обновить ${changedPages.length} изменённых страниц?`, async () => {
+    updatingPages.value = true
+    const paths = changedPages.map(p => p.page)
+    
+    try {
+      const response = await fetch(`/api/download-missing/${folderName.value}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths })
+      })
+      const data = await response.json()
+      showSuccess(`Обновлено: ${data.downloaded} / ${data.total}${data.failed > 0 ? ', ошибок: ' + data.failed : ''}`)
+      await checkAllChanges()
+    } catch (err) {
+      showError(err.message)
+    } finally {
+      updatingPages.value = false
+    }
+  }, 'Обновить')
 }
 
 async function updateSinglePage(page) {
@@ -2482,20 +2529,20 @@ async function showHistoryLogs() {
   }
 }
 
-async function stopRedownload() {
+function stopRedownload() {
   if (!activeJob.value?.id) return
-  if (!confirm('Остановить перекачивание?')) return
-  
-  try {
-    await fetch(`/api/jobs/${activeJob.value.id}/stop`, { method: 'POST' })
-    if (pollInterval) {
-      clearInterval(pollInterval)
-      pollInterval = null
+  showConfirm('Остановить?', 'Остановить перекачивание?', async () => {
+    try {
+      await fetch(`/api/jobs/${activeJob.value.id}/stop`, { method: 'POST' })
+      if (pollInterval) {
+        clearInterval(pollInterval)
+        pollInterval = null
+      }
+      activeJob.value = null
+    } catch (err) {
+      showError(err.message)
     }
-    activeJob.value = null
-  } catch (err) {
-    showError(err.message)
-  }
+  }, 'Остановить')
 }
 
 function loadThumbnail() {
@@ -2590,21 +2637,21 @@ async function redownloadFolder(folderNode) {
     return
   }
   
-  if (!confirm(`Перескачать ${htmlFiles.length} HTML файлов из "${folderNode.name}"?`)) return
-  
-  const paths = htmlFiles.map(f => f.path)
-  try {
-    const response = await fetch(`/api/download-missing/${folderName.value}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths })
-    })
-    const data = await response.json()
-    showSuccess(`Перескачано: ${data.downloaded} / ${data.total}${data.failed > 0 ? ', ошибок: ' + data.failed : ''}`)
-    if (data.downloaded > 0) loadFileTree()
-  } catch (err) {
-    showError(err.message)
-  }
+  showConfirm('Перескачать папку?', `Перескачать ${htmlFiles.length} HTML файлов из "${folderNode.name}"?`, async () => {
+    const paths = htmlFiles.map(f => f.path)
+    try {
+      const response = await fetch(`/api/download-missing/${folderName.value}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths })
+      })
+      const data = await response.json()
+      showSuccess(`Перескачано: ${data.downloaded} / ${data.total}${data.failed > 0 ? ', ошибок: ' + data.failed : ''}`)
+      if (data.downloaded > 0) loadFileTree()
+    } catch (err) {
+      showError(err.message)
+    }
+  }, 'Перескачать')
 }
 
 async function checkIntegrity() {
@@ -2622,30 +2669,30 @@ async function checkIntegrity() {
   }
 }
 
-async function downloadAllMissing() {
+function downloadAllMissing() {
   if (!integrityResult.value || !integrityResult.value.missing) return
   const paths = integrityResult.value.missing.map(m => m.path)
-  if (!confirm(`Докачать ${paths.length} файлов?`)) return
   
-  downloadingMissing.value = true
-  downloadResult.value = null
-  try {
-    const response = await fetch(`/api/download-missing/${folderName.value}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths })
-    })
-    const data = await response.json()
-    downloadResult.value = data
-    // Refresh integrity check and file tree
-    if (data.downloaded > 0) {
-      loadFileTree()
+  showConfirm('Докачать файлы?', `Докачать ${paths.length} файлов?`, async () => {
+    downloadingMissing.value = true
+    downloadResult.value = null
+    try {
+      const response = await fetch(`/api/download-missing/${folderName.value}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths })
+      })
+      const data = await response.json()
+      downloadResult.value = data
+      if (data.downloaded > 0) {
+        loadFileTree()
+      }
+    } catch (err) {
+      showError('Ошибка докачки: ' + err.message)
+    } finally {
+      downloadingMissing.value = false
     }
-  } catch (err) {
-    showError('Ошибка докачки: ' + err.message)
-  } finally {
-    downloadingMissing.value = false
-  }
+  }, 'Докачать')
 }
 
 async function downloadSingleMissing(path) {
@@ -3053,17 +3100,47 @@ async function openVueWrapper() {
     const response = await fetch(`/api/downloads/${folderName.value}/start-vue`, { method: 'POST' })
     const data = await response.json()
     
-    if (data.success) {
-      runningServers.value.vue = { port: data.port, pid: data.pid, url: data.url }
+    if (data.status === 'started' || data.status === 'already_running') {
+      runningServers.value.vue = { port: data.vue_port, pid: data.vue_pid, url: data.url }
       showOpenModal.value = false
       window.open(data.url, '_blank')
+    } else if (data.error) {
+      showError('Ошибка запуска Vue: ' + data.error)
     } else {
-      showError('Ошибка запуска Vue: ' + (data.error || 'Неизвестная ошибка'))
+      showError('Ошибка запуска Vue: Неизвестная ошибка')
     }
   } catch (err) {
     showError(err.message)
   } finally {
     startingServer.value = null
+  }
+}
+
+async function restartVueServer() {
+  restartingVue.value = true
+  
+  try {
+    // Останавливаем текущий сервер
+    await fetch(`/api/downloads/${folderName.value}/stop-vue`, { method: 'POST' })
+    
+    // Небольшая пауза
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
+    // Запускаем заново
+    const response = await fetch(`/api/downloads/${folderName.value}/start-vue`, { method: 'POST' })
+    const data = await response.json()
+    
+    if (data.status === 'started' || data.status === 'already_running') {
+      runningServers.value.vue = { port: data.vue_port, pid: data.vue_pid, url: data.url }
+      showToast('Vue сервер перезапущен', 'success')
+      window.open(data.url, '_blank')
+    } else if (data.error) {
+      showError('Ошибка перезапуска: ' + data.error)
+    }
+  } catch (err) {
+    showError(err.message)
+  } finally {
+    restartingVue.value = false
   }
 }
 
@@ -3075,12 +3152,14 @@ async function openBackendServer() {
     const response = await fetch(`/api/downloads/${folderName.value}/start-backend`, { method: 'POST' })
     const data = await response.json()
     
-    if (data.success) {
+    if (data.status === 'started' || data.status === 'already_running') {
       runningServers.value.backend = { port: data.port, pid: data.pid, url: data.url }
       showOpenModal.value = false
       window.open(data.url, '_blank')
+    } else if (data.error) {
+      showError('Ошибка запуска Backend: ' + data.error)
     } else {
-      showError('Ошибка запуска Backend: ' + (data.error || 'Неизвестная ошибка'))
+      showError('Ошибка запуска Backend: Неизвестная ошибка')
     }
   } catch (err) {
     showError(err.message)
@@ -3154,29 +3233,29 @@ async function downloadSubdomain(subdomain) {
   }
 }
 
-async function redownloadSubdomain(subdomain) {
-  if (!confirm(`Перескачать поддомен "${subdomain.name}"?\n\nЭто обновит все файлы.`)) return
-  
-  const url = `https://${subdomain.name}`
-  try {
-    const response = await fetch('/api/landings/redownload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url: url,
-        folder_name: folderName.value,
-        config_key: subdomain.config_key
+function redownloadSubdomain(subdomain) {
+  showConfirm('Перескачать поддомен?', `Перескачать поддомен "${subdomain.name}"?\n\nЭто обновит все файлы.`, async () => {
+    const url = `https://${subdomain.name}`
+    try {
+      const response = await fetch('/api/landings/redownload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: url,
+          folder_name: folderName.value,
+          config_key: subdomain.config_key
+        })
       })
-    })
-    const data = await response.json()
-    if (data.id) {
-      showSuccess(`Перескачивание запущено! URL: ${url}`)
-    } else {
-      showError(data.error || 'Неизвестная ошибка')
+      const data = await response.json()
+      if (data.id) {
+        showSuccess(`Перескачивание запущено! URL: ${url}`)
+      } else {
+        showError(data.error || 'Неизвестная ошибка')
+      }
+    } catch (err) {
+      showError('Ошибка запуска перескачивания: ' + err.message)
     }
-  } catch (err) {
-    showError('Ошибка запуска перескачивания: ' + err.message)
-  }
+  }, 'Перескачать')
 }
 
 async function checkPageChanges(page) {
@@ -3336,17 +3415,15 @@ async function checkChanges() {
   }
 }
 
-async function deleteSite() {
-  if (!confirm(`Удалить "${siteData.value.domain}"?\n\nЭто действие нельзя отменить!`)) {
-    return
-  }
-  
-  try {
-    await landingsStore.deleteFolder(folderName.value)
-    router.push('/landings')
-  } catch (err) {
-    showError('Ошибка удаления: ' + err.message)
-  }
+function deleteSite() {
+  showConfirm('Удалить сайт?', `Удалить "${siteData.value.domain}"?\n\nЭто действие нельзя отменить!`, async () => {
+    try {
+      await landingsStore.deleteFolder(folderName.value)
+      router.push('/landings')
+    } catch (err) {
+      showError('Ошибка удаления: ' + err.message)
+    }
+  }, 'Удалить')
 }
 
 async function checkActiveJobs() {

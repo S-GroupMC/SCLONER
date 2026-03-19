@@ -269,11 +269,45 @@
         </table>
       </div>
     </div>
+    <!-- Confirm Modal -->
+    <Teleport to="body">
+      <div v-if="confirmModal.show" class="fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/50" @click="confirmModal.show = false"></div>
+        <div class="relative bg-white rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 animate-fade-in">
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">{{ confirmModal.title }}</h3>
+          <p class="text-gray-600 mb-6">{{ confirmModal.message }}</p>
+          <div class="flex justify-end space-x-3">
+            <button @click="confirmModal.show = false" class="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
+              Отмена
+            </button>
+            <button @click="confirmModal.onConfirm(); confirmModal.show = false" class="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors">
+              {{ confirmModal.confirmText || 'Удалить' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Alert Modal -->
+    <Teleport to="body">
+      <div v-if="alertModal.show" class="fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/50" @click="alertModal.show = false"></div>
+        <div class="relative bg-white rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4 animate-fade-in">
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">{{ alertModal.title }}</h3>
+          <pre class="text-gray-600 mb-6 whitespace-pre-wrap text-sm">{{ alertModal.message }}</pre>
+          <div class="flex justify-end">
+            <button @click="alertModal.show = false" class="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+              OK
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLandingsStore } from '../stores/landings'
 import ActiveDownloads from '../components/ActiveDownloads.vue'
@@ -283,6 +317,35 @@ const landingsStore = useLandingsStore()
 
 const landings = computed(() => landingsStore.landings)
 const loading = computed(() => landingsStore.loading)
+
+// Custom modals instead of browser confirm/alert
+const confirmModal = reactive({
+  show: false,
+  title: '',
+  message: '',
+  confirmText: 'Удалить',
+  onConfirm: () => {}
+})
+
+const alertModal = reactive({
+  show: false,
+  title: 'Информация',
+  message: ''
+})
+
+function showConfirm(title, message, onConfirm, confirmText = 'Удалить') {
+  confirmModal.title = title
+  confirmModal.message = message
+  confirmModal.confirmText = confirmText
+  confirmModal.onConfirm = onConfirm
+  confirmModal.show = true
+}
+
+function showAlert(title, message) {
+  alertModal.title = title
+  alertModal.message = message
+  alertModal.show = true
+}
 
 // Артисты из API
 const ARTISTS_API = 'https://adminzone.space/api/v1/public/artists'
@@ -400,22 +463,24 @@ async function checkChanges(folderName) {
       message += '✅ Изменений не обнаружено\n\nЛокальная версия актуальна.'
     }
     
-    alert(message)
+    showAlert('Результат проверки', message)
   } catch (error) {
-    alert('Ошибка проверки: ' + error.message)
+    showAlert('Ошибка', 'Ошибка проверки: ' + error.message)
   }
 }
 
-async function deleteFolder(folderName) {
-  if (!confirm(`Удалить "${folderName}"? Это действие нельзя отменить.`)) {
-    return
-  }
-  
-  try {
-    await landingsStore.deleteFolder(folderName)
-  } catch (error) {
-    alert('Ошибка удаления: ' + error.message)
-  }
+function deleteFolder(folderName) {
+  showConfirm(
+    'Подтверждение удаления',
+    `Удалить "${folderName}"? Это действие нельзя отменить.`,
+    async () => {
+      try {
+        await landingsStore.deleteFolder(folderName)
+      } catch (error) {
+        showAlert('Ошибка', 'Ошибка удаления: ' + error.message)
+      }
+    }
+  )
 }
 
 onMounted(() => {

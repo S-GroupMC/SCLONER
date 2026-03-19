@@ -80,7 +80,6 @@ def generate_preview_screenshot(folder_path, main_domain, job_id, index_file=Non
     if not index_file:
         index_paths = [
             folder_path / 'index.html',
-            folder_path / '_site' / 'index.html',
             folder_path / main_domain / 'index.html'
         ]
         
@@ -156,15 +155,6 @@ def generate_vue_wrapper(folder_path, main_domain, port=3000, backend_port=3001)
         src_dir = vue_dir / 'src'
         src_dir.mkdir(exist_ok=True)
         
-        site_dir = folder_path / '_site'
-        if not site_dir.exists():
-            site_dir.mkdir(exist_ok=True)
-            for item in folder_path.iterdir():
-                if item.name not in ['vue-app', '_site', '_wcloner', 'server.js', 'package.json', 'README.md', 'backend-server.js']:
-                    target = site_dir / item.name
-                    if not target.exists():
-                        shutil.move(str(item), str(target))
-        
         package_name = main_domain.replace('.', '-')
         
         # index.html
@@ -184,6 +174,7 @@ def generate_vue_wrapper(folder_path, main_domain, port=3000, backend_port=3001)
         with open(template_dir / 'package.json', 'r', encoding='utf-8') as f:
             content = f.read()
         content = content.replace('{{PACKAGE_NAME}}', package_name)
+        content = content.replace('{{MAIN_DOMAIN}}', main_domain)
         with open(vue_dir / 'package.json', 'w', encoding='utf-8') as f:
             f.write(content)
         
@@ -357,10 +348,6 @@ def prepare_landing_folder(url, folder_name=None):
         if (template_dir / 'server.js').exists():
             shutil.copy(template_dir / 'server.js', folder_path / 'backend-server.js')
             os.chmod(folder_path / 'backend-server.js', 0o755)
-    
-    # Create _site directory for downloaded content
-    site_dir = folder_path / '_site'
-    site_dir.mkdir(exist_ok=True)
     
     return {
         'folder_name': folder_name,

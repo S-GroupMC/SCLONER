@@ -7,12 +7,14 @@ import multiprocessing
 import os
 import shutil
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urlparse
 
 from .config import (
     DOWNLOADS_DIR, WGET2_PATH, HTTRACK_PATH, PUPPETEER_SCRIPT,
     TOOL_ENV, jobs, save_jobs
 )
+
 
 # Blocked domains - analytics, tracking, ads
 BLOCKED_DOMAINS = [
@@ -38,14 +40,12 @@ BLOCKED_DOMAINS = [
     'trustpilot.com/bootstrap', 'widget.trustpilot.com',
 ]
 
-# Allowed CDN patterns
+# Allowed CDN patterns (only fonts and essential CSS/JS libraries)
 ALLOWED_CDN_PATTERNS = [
-    'cdn.shopify.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net',
-    'unpkg.com', 'fonts.googleapis.com', 'fonts.gstatic.com',
+    'fonts.googleapis.com', 'fonts.gstatic.com',
     'use.fontawesome.com', 'kit.fontawesome.com',
-    'ajax.googleapis.com', 'code.jquery.com',
     'stackpath.bootstrapcdn.com', 'maxcdn.bootstrapcdn.com',
-    'cdn.tailwindcss.com',
+    'cdn.tailwindcss.com', 'unpkg.com',
 ]
 
 
@@ -109,6 +109,10 @@ def get_domain_filter_config(job):
     
     if opts.get('include_subdomains', False):
         allowed_domains.add(f'*.{base_domain}')
+        # Add common subdomains explicitly for wget2 compatibility
+        common_subdomains = ['shop', 'store', 'www', 'cdn', 'static', 'assets', 'media', 'images', 'img']
+        for sub in common_subdomains:
+            allowed_domains.add(f'{sub}.{base_domain}')
     
     extra_domains = opts.get('extra_domains', '')
     if extra_domains:
@@ -192,6 +196,10 @@ def build_wget_command(job):
     if opts.get('adjust_extensions', True):
         cmd.append('-E')
     
+    # Cut query strings from filenames for cleaner local paths
+    if opts.get('cut_get_vars', True):
+        cmd.append('--cut-file-get-vars')
+    
     filter_config = get_domain_filter_config(job)
     base_domain = filter_config['base_domain']
     
@@ -213,7 +221,10 @@ def build_wget_command(job):
     reject_domains = ','.join([f'*{d}*' for d in filter_config['blocked_domains'][:20]])
     cmd.extend(['--reject-regex', reject_domains])
     
-    cmd.append('-H')
+    # Only span hosts if explicitly enabled AND only for allowed domains
+    # By default, stay on the same domain to avoid downloading external sites
+    if opts.get('span_hosts', False):
+        cmd.append('-H')
     
     if opts.get('no_parent', True):
         cmd.append('--no-parent')
@@ -269,6 +280,9 @@ def build_wget_command(job):
     # Use --timestamping instead for incremental downloads
     if opts.get('timestamping', False):
         cmd.append('--timestamping')
+    
+    # Note: wget2 creates host directories by default (e.g., eagles.com/)
+    # We handle this in the server configuration
     
     cmd.extend(['-P', str(job.output_dir)])
     cmd.append('--progress=dot:default')
@@ -520,14 +534,35 @@ def run_wget_job(job_id):
         job.finished_at = datetime.now()
         update_job_stats(job)
         
-        # Auto-generate preview screenshot
+        # Auto-generate preview screenshot and clean HTML
         if job.status == 'completed':
+            try:
+                # Clean HTML: remove trackers and fix internal links
+                from .html_cleaner import clean_downloaded_site
+                parsed = urlparse(job.url)
+                main_domain = parsed.netloc.replace('www.', '')
+                
+                job.output_lines.append("[WCLoner] Очистка HTML от трекеров...")
+                stats = clean_downloaded_site(job.output_dir, main_domain)
+                
+                if stats.get('error'):
+                    job.output_lines.append(f"[WCLoner] ⚠️ {stats['error']}")
+                else:
+                    job.output_lines.append(f"[WCLoner] ✅ Обработано {stats['modified_files']}/{stats['total_files']} файлов")
+                    if stats['trackers_removed'] > 0:
+                        job.output_lines.append(f"[WCLoner] ✅ Удалено трекеров: {stats['trackers_removed']}")
+                    if stats['links_rewritten'] > 0:
+                        job.output_lines.append(f"[WCLoner] ✅ Исправлено ссылок: {stats['links_rewritten']}")
+                    if stats['downloaded_domains']:
+                        job.output_lines.append(f"[WCLoner] 📁 Домены: {', '.join(stats['downloaded_domains'])}")
+            except Exception as e:
+                job.output_lines.append(f"[WCLoner] ❌ Ошибка очистки HTML: {str(e)}")
+            
             try:
                 from .file_manager import generate_preview_screenshot
                 parsed = urlparse(job.url)
                 main_domain = parsed.netloc.replace('www.', '')
                 
-                job.output_lines.append("")
                 job.output_lines.append("[WCLoner] Создание preview screenshot...")
                 
                 preview_path = generate_preview_screenshot(
@@ -584,20 +619,23 @@ def start_job_process(job_id):
     log_dir.mkdir(exist_ok=True)
     log_file = log_dir / f'wget_{job.id}.log'
     
-    # Start subprocess with output to file
+    # Start subprocess with shell redirect to avoid buffer issues
     try:
-        log_handle = open(log_file, 'w', buffering=1)
+        # Use shell to redirect output to file
+        cmd_str = ' '.join(f'"{c}"' if ' ' in c else c for c in cmd)
+        shell_cmd = f'{cmd_str} > "{log_file}" 2>&1'
+        
         process = subprocess.Popen(
-            cmd,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
+            shell_cmd,
+            shell=True,
             stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=TOOL_ENV,
             start_new_session=True
         )
         job.process = process
         job.pid = process.pid
-        job.log_handle = log_handle
         job.output_lines.append(f"[Process] Started with PID: {process.pid}")
         job.output_lines.append(f"[Process] Log file: {log_file}")
         save_jobs()
@@ -629,11 +667,6 @@ def start_job_process(job_id):
             
             # Process finished - read remaining output
             try:
-                log_handle.close()
-            except:
-                pass
-            
-            try:
                 with open(log_file, 'r') as f:
                     f.seek(last_pos)
                     remaining = f.read()
@@ -658,8 +691,30 @@ def start_job_process(job_id):
                 job.status = 'failed'
             job.finished_at = datetime.now()
             
-            # Auto-generate preview
+            # Auto-generate preview and clean HTML
             if job.status == 'completed':
+                try:
+                    # Clean HTML: remove trackers and fix internal links
+                    from .html_cleaner import clean_downloaded_site
+                    parsed = urlparse(job.url)
+                    main_domain = parsed.netloc.replace('www.', '')
+                    
+                    job.output_lines.append("[WCLoner] Очистка HTML от трекеров...")
+                    stats = clean_downloaded_site(job.output_dir, main_domain)
+                    
+                    if stats.get('error'):
+                        job.output_lines.append(f"[WCLoner] ⚠️ {stats['error']}")
+                    else:
+                        job.output_lines.append(f"[WCLoner] ✅ Обработано {stats['modified_files']}/{stats['total_files']} файлов")
+                        if stats['trackers_removed'] > 0:
+                            job.output_lines.append(f"[WCLoner] ✅ Удалено трекеров: {stats['trackers_removed']}")
+                        if stats['links_rewritten'] > 0:
+                            job.output_lines.append(f"[WCLoner] ✅ Исправлено ссылок: {stats['links_rewritten']}")
+                        if stats['downloaded_domains']:
+                            job.output_lines.append(f"[WCLoner] 📁 Домены: {', '.join(stats['downloaded_domains'])}")
+                except Exception as e:
+                    job.output_lines.append(f"[WCLoner] ❌ Ошибка очистки HTML: {e}")
+                
                 try:
                     from .file_manager import generate_preview_screenshot
                     parsed = urlparse(job.url)

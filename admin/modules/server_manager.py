@@ -273,6 +273,27 @@ def stop_servers(folder_name):
     }
 
 
+def stop_vue_server(folder_name):
+    """Stop only Vue server for a folder"""
+    servers = running_servers.get(folder_name, {})
+    vue_info = servers.get('vue')
+    
+    if not vue_info:
+        return {'status': 'not_running'}
+    
+    pid = vue_info.get('pid')
+    if pid:
+        try:
+            os.kill(pid, 9)
+        except (OSError, ProcessLookupError):
+            pass
+    
+    if folder_name in running_servers and 'vue' in running_servers[folder_name]:
+        del running_servers[folder_name]['vue']
+    
+    return {'status': 'stopped', 'server': 'vue'}
+
+
 def stop_all_servers():
     """Stop all running servers"""
     all_folders = list(running_servers.keys())
