@@ -419,6 +419,15 @@
             <span v-if="trackersData?.total_trackers > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full" :class="activeTab === 'trackers' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'">{{ trackersData.total_trackers }}</span>
           </button>
           <button 
+            @click="activeTab = 'htmlfixer'"
+            class="px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center space-x-2"
+            :class="activeTab === 'htmlfixer' ? 'border-orange-600 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+          >
+            <i class="fas fa-wrench"></i>
+            <span>HTML Fixer</span>
+            <span v-if="htmlFixerData?.total_fixes > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full" :class="activeTab === 'htmlfixer' ? 'bg-orange-100 text-orange-700' : 'bg-orange-100 text-orange-600'">{{ htmlFixerData.total_fixes }}</span>
+          </button>
+          <button 
             @click="activeTab = 'info'"
             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center space-x-2"
             :class="activeTab === 'info' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
@@ -1264,6 +1273,114 @@
         </div>
       </div>
       
+      <!-- ТАБ: HTML Fixer -->
+      <div v-show="activeTab === 'htmlfixer'" class="card">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold text-gray-900 flex items-center">
+            <i class="fas fa-wrench mr-2 text-orange-600"></i>
+            HTML Fixer (wget2 -k)
+          </h2>
+          <div class="flex space-x-2">
+            <button 
+              @click="scanHtmlFixes()"
+              :disabled="htmlFixerLoading"
+              class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 text-sm font-medium transition-all disabled:opacity-50"
+            >
+              <i :class="htmlFixerLoading ? 'fas fa-spinner fa-spin' : 'fas fa-search'" class="mr-2"></i>
+              {{ htmlFixerLoading ? 'Анализ...' : 'Сканировать' }}
+            </button>
+            <button 
+              @click="applyHtmlFixes()"
+              :disabled="htmlFixerApplying || (!htmlFixerData || htmlFixerData.total_fixes === 0)"
+              class="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 text-sm font-medium transition-all disabled:opacity-50"
+            >
+              <i :class="htmlFixerApplying ? 'fas fa-spinner fa-spin' : 'fas fa-magic'" class="mr-2"></i>
+              {{ htmlFixerApplying ? 'Исправление...' : 'Исправить' }}
+            </button>
+          </div>
+        </div>
+        
+        <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4 text-sm text-orange-800">
+          <i class="fas fa-info-circle mr-1"></i>
+          wget2 с флагом -k (--convert-links) может повредить HTML, вставляя URL страницы внутрь слов и атрибутов.
+          Например: <code class="bg-orange-100 px-1 rounded">stylesheet</code> превращается в <code class="bg-orange-100 px-1 rounded">styleshttps://domain/path/heet</code>.
+          Этот инструмент находит и удаляет такие вставки.
+        </div>
+        
+        <div v-if="htmlFixerLoading || htmlFixerApplying" class="flex items-center justify-center py-12">
+          <i class="fas fa-spinner fa-spin text-3xl text-orange-500 mr-3"></i>
+          <span class="text-gray-500">{{ htmlFixerApplying ? 'Исправление HTML файлов...' : 'Анализ HTML файлов...' }}</span>
+        </div>
+        
+        <div v-else-if="htmlFixerData">
+          <div class="grid grid-cols-3 gap-4 mb-6">
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold" :class="htmlFixerData.total_fixes > 0 ? 'text-orange-600' : 'text-green-600'">{{ htmlFixerData.total_fixes }}</div>
+              <div class="text-xs text-gray-500 mt-1">Повреждений {{ htmlFixerData.dry_run ? 'найдено' : 'исправлено' }}</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-gray-700">{{ htmlFixerData.modified_files }}</div>
+              <div class="text-xs text-gray-500 mt-1">Файлов {{ htmlFixerData.dry_run ? 'затронуто' : 'исправлено' }}</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-gray-700">{{ htmlFixerData.total_files }}</div>
+              <div class="text-xs text-gray-500 mt-1">HTML файлов проверено</div>
+            </div>
+          </div>
+          
+          <div v-if="htmlFixerData.dry_run && htmlFixerData.total_fixes > 0" class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-800">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            Это предварительный анализ. Нажмите "Исправить" чтобы применить изменения.
+          </div>
+          
+          <div v-if="!htmlFixerData.dry_run && htmlFixerData.total_fixes > 0" class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 text-sm text-green-800">
+            <i class="fas fa-check-circle mr-1"></i>
+            Исправления применены! Перезапустите Vue сервер чтобы увидеть результат.
+          </div>
+          
+          <div v-if="htmlFixerData.total_fixes === 0" class="bg-green-50 rounded-lg p-8 text-center">
+            <i class="fas fa-check-circle text-4xl text-green-500 mb-3"></i>
+            <p class="text-green-700 font-medium">Повреждений не найдено!</p>
+            <p class="text-green-600 text-sm mt-1">HTML файлы не содержат ошибок wget2 -k</p>
+          </div>
+          
+          <div v-if="htmlFixerData.files?.length > 0" class="space-y-2 mt-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Файлы с исправлениями:</h3>
+            <div 
+              v-for="(file, idx) in htmlFixerData.files.slice(0, showAllFixerFiles ? 999 : 20)" 
+              :key="idx"
+              class="border rounded-lg p-3 hover:border-orange-300 transition-colors"
+            >
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                  <i class="fas fa-file-code text-orange-500"></i>
+                  <span class="text-sm font-mono text-gray-700">{{ file.path }}</span>
+                </div>
+                <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">{{ file.fixes }} fix</span>
+              </div>
+              <div v-if="file.details?.length > 0" class="mt-2">
+                <div v-for="(detail, di) in file.details" :key="di" class="bg-gray-900 rounded p-1.5 mt-1 overflow-x-auto">
+                  <code class="text-xs text-green-400 font-mono whitespace-pre-wrap break-all">{{ detail }}</code>
+                </div>
+              </div>
+            </div>
+            <button 
+              v-if="htmlFixerData.files.length > 20 && !showAllFixerFiles"
+              @click="showAllFixerFiles = true"
+              class="w-full py-2 text-sm text-orange-600 hover:text-orange-700 font-medium"
+            >
+              Показать все {{ htmlFixerData.files.length }} файлов...
+            </button>
+          </div>
+        </div>
+        
+        <div v-else class="bg-gray-50 rounded-lg p-8 text-center text-gray-500">
+          <i class="fas fa-wrench text-4xl mb-3"></i>
+          <p>Нажмите "Сканировать" для анализа HTML файлов</p>
+          <p class="text-xs mt-2">Поиск и исправление повреждений от wget2 --convert-links</p>
+        </div>
+      </div>
+      
       <!-- ТАБ: Информация -->
       <div v-show="activeTab === 'info'" class="card">
         <h2 class="text-lg font-bold text-gray-900 flex items-center mb-4">
@@ -2022,6 +2139,10 @@ const onlyRelevant = ref(false)
 const activeTab = ref('subdomains')
 const trackersData = ref(null)
 const trackersLoading = ref(false)
+const htmlFixerData = ref(null)
+const htmlFixerLoading = ref(false)
+const htmlFixerApplying = ref(false)
+const showAllFixerFiles = ref(false)
 const fileTreeData = ref(null)
 const fileTreeLoading = ref(false)
 const expandedFolders = ref({})
@@ -2406,6 +2527,37 @@ async function loadTrackers() {
     showError('Ошибка сканирования трекеров: ' + err.message)
   } finally {
     trackersLoading.value = false
+  }
+}
+
+async function scanHtmlFixes() {
+  htmlFixerLoading.value = true
+  htmlFixerData.value = null
+  showAllFixerFiles.value = false
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/fix-html-scan`, { method: 'POST' })
+    htmlFixerData.value = data
+  } catch (err) {
+    console.error('Error scanning HTML fixes:', err)
+    showError('Ошибка анализа HTML: ' + err.message)
+  } finally {
+    htmlFixerLoading.value = false
+  }
+}
+
+async function applyHtmlFixes() {
+  htmlFixerApplying.value = true
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/fix-html`, { method: 'POST' })
+    htmlFixerData.value = data
+    if (data.total_fixes > 0) {
+      showSuccess(`Исправлено ${data.total_fixes} повреждений в ${data.modified_files} файлах`)
+    }
+  } catch (err) {
+    console.error('Error applying HTML fixes:', err)
+    showError('Ошибка исправления HTML: ' + err.message)
+  } finally {
+    htmlFixerApplying.value = false
   }
 }
 

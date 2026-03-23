@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 
 const props = defineProps({
@@ -8,9 +8,22 @@ const props = defineProps({
 })
 
 const route = useRoute()
-const page = ref((route.query.page || ''))
+
+// Читаем page из route.query ИЛИ из window.location (fallback при refresh)
+function getInitialPage() {
+  if (route.query.page) return route.query.page
+  try {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('page') || ''
+  } catch (e) {
+    return ''
+  }
+}
+
+const page = ref(getInitialPage())
 const iframeSrc = ref(resolveIframeSrc(page.value))
 const iframeRef = ref(null)
+const initialLoad = ref(true)
 
 // SEO данные
 const seoTitle = ref('')
@@ -27,9 +40,16 @@ function resolveIframeSrc(p) {
 // Обновление iframe при изменении route
 function updateIframe() {
   const newPage = route.query.page || ''
-  page.value = newPage
-  iframeSrc.value = resolveIframeSrc(newPage)
+  if (newPage !== page.value) {
+    page.value = newPage
+    iframeSrc.value = resolveIframeSrc(newPage)
+  }
 }
+
+// Следим за изменением query параметра page
+watch(() => route.query.page, (newPage) => {
+  updateIframe()
+})
 
 // Извлечение SEO данных из iframe
 function extractSEO() {
@@ -132,7 +152,12 @@ function onIframeLoad() {
     if (iframe && iframe.contentWindow) {
       const path = iframe.contentWindow.location.pathname
       console.log('[WCLoner] Iframe loaded:', path)
-      updateBrowserUrl(path)
+      // Не перезаписываем URL при первой загрузке - page уже установлен из URL
+      if (initialLoad.value) {
+        initialLoad.value = false
+      } else {
+        updateBrowserUrl(path)
+      }
       
       // Извлечение SEO через небольшую задержку
       setTimeout(extractSEO, 300)
@@ -176,16 +201,10 @@ function handleMessage(event) {
 }
 
 onMounted(() => {
-  if (iframeRef.value) {
-    iframeRef.value.addEventListener('load', onIframeLoad)
-  }
   window.addEventListener('message', handleMessage)
 })
 
 onUnmounted(() => {
-  if (iframeRef.value) {
-    iframeRef.value.removeEventListener('load', onIframeLoad)
-  }
   window.removeEventListener('message', handleMessage)
 })
 </script>
@@ -204,8 +223,8 @@ onUnmounted(() => {
     <!-- Hidden SEO content for crawlers -->
     <div class="seo-content" aria-hidden="true">
       <h1 v-if="seoH1">{{ seoH1 }}</h1>
-      <h2 v-for="h2 in seoH2s" :key="h2">{{ h2 }}</h2>
-      <p v-for="text in seoTexts" :key="text">{{ text }}</p>
+      <h2 v-for="(h2, i) in seoH2s" :key="'h2-' + i">{{ h2 }}</h2>
+      <p v-for="(text, i) in seoTexts" :key="'p-' + i">{{ text }}</p>
       <p v-if="seoDescription">{{ seoDescription }}</p>
     </div>
   </div>

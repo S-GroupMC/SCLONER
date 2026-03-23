@@ -713,6 +713,28 @@ async def scan_trackers_endpoint(folder_name):
     return scan_trackers(folder_path)
 
 
+@app.post('/api/downloads/{folder_name}/fix-html')
+async def fix_html_endpoint(folder_name):
+    """Fix wget2 -k HTML corruption: removes URLs inserted inside words/attributes."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    from modules.html_fixer import fix_wget_corrupted_html
+    return fix_wget_corrupted_html(folder_path)
+
+
+@app.post('/api/downloads/{folder_name}/fix-html-scan')
+async def fix_html_scan_endpoint(folder_name):
+    """Dry-run scan: show what would be fixed without modifying files."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    from modules.html_fixer import fix_wget_corrupted_html
+    return fix_wget_corrupted_html(folder_path, dry_run=True)
+
+
 @app.get('/api/downloads/{folder_name}/scripts-status')
 async def get_scripts_status(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
