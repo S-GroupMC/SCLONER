@@ -58,7 +58,11 @@ const MIME_TYPES = {
 
 // Find a file in project directory by URL path
 function findFile(urlPath) {
-  const normalized = path.normalize(urlPath).replace(/\\/g, '/')
+  // Strip query params for file lookup
+  const queryIndex = urlPath.indexOf('?')
+  const basePath = queryIndex > -1 ? urlPath.substring(0, queryIndex) : urlPath
+  
+  const normalized = path.normalize(basePath).replace(/\\/g, '/')
   if (normalized.includes('..')) return null
 
   // Strategy 1: Direct path from project root (handles /eagles.com/cdn/... paths)
@@ -116,6 +120,26 @@ export default defineConfig({
     {
       name: 'serve-site',
       configureServer(server) {
+        // Middleware: Block Shopify tracking/analytics endpoints (return empty JS)
+        server.middlewares.use((req, res, next) => {
+          const urlPath = decodeURIComponent(req.url || '/').split('?')[0]
+          
+          if (urlPath.includes('shopifycloud/') || 
+              urlPath.includes('checkouts/internal/') ||
+              urlPath.includes('privacy-banner/') ||
+              urlPath.includes('shop-js/') ||
+              urlPath.includes('web-pixels') ||
+              urlPath.includes('perf-kit/') ||
+              urlPath.includes('trekkie') ||
+              urlPath.includes('monorail')) {
+            res.setHeader('Content-Type', 'application/javascript')
+            res.setHeader('Access-Control-Allow-Origin', '*')
+            res.statusCode = 200
+            return res.end('// Shopify stub')
+          }
+          next()
+        })
+        
         // Middleware 0: Redirect internal page links to Vue wrapper
         // When user clicks /pages/home in iframe, it escapes to top level
         // Redirect to /?page=pages/home.html so Vue wrapper handles it
@@ -196,20 +220,39 @@ export default defineConfig({
 
         // Middleware 2: /__raw prefix for iframe content
         server.middlewares.use('/__raw', (req, res, next) => {
-          const urlPath = decodeURIComponent(req.url || '/').split('?')[0]
+          let urlPath = decodeURIComponent(req.url || '/')
+          // Strip query params for path resolution but keep for file lookup
+          const queryIndex = urlPath.indexOf('?')
+          const basePath = queryIndex > -1 ? urlPath.substring(0, queryIndex) : urlPath
 
           // Default to index.html in main domain folder
-          let resolvedPath = urlPath
-          if (urlPath === '/' || urlPath === '') {
+          let resolvedPath = basePath
+          if (basePath === '/' || basePath === '') {
             resolvedPath = mainDomain ? `/${mainDomain}/index.html` : '/index.html'
           }
 
-          const filePath = findFile(resolvedPath)
+          // If path starts with a domain folder, use it directly
+          // e.g., /shop.eagles.com/cdn/... -> /shop.eagles.com/cdn/...
+          let filePath = findFile(resolvedPath)
+          
+          // If not found and path doesn't start with domain, try prepending each domain
+          // This handles relative paths like /cdn/shop/... from subdomain pages
+          if (!filePath) {
+            const startsWithDomain = domains.some(d => resolvedPath.startsWith('/' + d + '/'))
+            if (!startsWithDomain) {
+              for (const domain of domains) {
+                const testPath = '/' + domain + resolvedPath
+                filePath = findFile(testPath)
+                if (filePath) break
+              }
+            }
+          }
+          
           if (filePath) {
             serveFile(filePath, res)
           } else {
             res.statusCode = 404
-            res.end('Not found: ' + urlPath)
+            res.end('Not found: ' + basePath)
           }
         })
       }
