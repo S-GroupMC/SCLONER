@@ -40,9 +40,48 @@ function getBaseDomain(hostname) {
 }
 const baseDomain = getBaseDomain(baseUrl.hostname);
 
+// URL patterns to reject (useless/duplicate content)
+const REJECT_PATTERNS = [
+    /\/checkouts\//,
+    /\.oembed/,
+    /\/cdn\/shopifycloud\//,
+    /\/web-pixels-manager/,
+    /[?&]variant=/,
+    /\/cart\.js/,
+    /\/cart\/add/,
+    /\/cart\/change/,
+    /\/search\?/,
+    /\/account\//,
+    /\/policies\//,
+    /[?&]width=\d+/,
+    /[?&]w=\d+/,
+    /[?&]size=/,
+    /[?&]resize=/,
+    /[?&]fit=/,
+    /[?&]quality=/,
+    /[?&]format=auto/,
+    /\/wp-admin\//,
+    /\/wp-login\.php/,
+    /\/wp-json\//,
+    /\/xmlrpc\.php/,
+    /\?replytocom=/,
+    /\/wp-comments-post\.php/,
+    /\/_api\//,
+    /\/wix-code\//,
+    /\/_serverless\//,
+    /\/cdn-cgi\//,
+    /\?preview_theme_id=/,
+];
+
+// Check if URL should be rejected
+function isRejectedUrl(url) {
+    return REJECT_PATTERNS.some(pattern => pattern.test(url));
+}
+
 // Check if URL is allowed (same domain or subdomain)
 function isAllowedDomain(url) {
     try {
+        if (isRejectedUrl(url)) return false;
         const parsed = new URL(url);
         const urlDomain = getBaseDomain(parsed.hostname);
         return urlDomain === baseDomain;

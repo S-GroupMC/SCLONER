@@ -11,23 +11,65 @@ ADMIN_DIR="$PROJECT_DIR/admin"
 FRONTEND_DIR="$ADMIN_DIR/frontend"
 
 BACKEND_PORT=9000
-FRONTEND_PORT=5173
+FRONTEND_PORT=5176
+SERVERS_REGISTRY="$ADMIN_DIR/_wcloner_servers.json"
 
 echo "=========================================="
-echo "  🐰 Black Rabbit Cloner"
+echo "  Black Rabbit Cloner"
 echo "  Режим: $MODE"
 echo "=========================================="
+
+# Убиваем старые node-серверы скачанных сайтов из реестра
+if [ -f "$SERVERS_REGISTRY" ]; then
+    echo ""
+    echo "--- Очистка старых серверов ---"
+    # Извлекаем PID и port из JSON и убиваем
+    PIDS=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open('$SERVERS_REGISTRY'))
+    for folder, servers in data.items():
+        for stype, info in servers.items():
+            pid = info.get('pid', 0)
+            port = info.get('port', 0)
+            if pid: print(f'{pid}:{port}:{folder}/{stype}')
+except: pass
+" 2>/dev/null)
+    
+    if [ -n "$PIDS" ]; then
+        while IFS= read -r line; do
+            PID_NUM=$(echo "$line" | cut -d: -f1)
+            PORT_NUM=$(echo "$line" | cut -d: -f2)
+            NAME=$(echo "$line" | cut -d: -f3)
+            if kill -9 "$PID_NUM" 2>/dev/null; then
+                echo "   Killed $NAME (PID $PID_NUM, port $PORT_NUM)"
+            fi
+            # Убиваем порт на всякий случай
+            lsof -ti:"$PORT_NUM" 2>/dev/null | xargs kill -9 2>/dev/null
+        done <<< "$PIDS"
+    else
+        echo "   Нет старых серверов"
+    fi
+    # Очищаем реестр
+    echo "{}" > "$SERVERS_REGISTRY"
+    echo "   Реестр очищен"
+fi
 
 # Функция остановки процессов при выходе
 cleanup() {
     echo ""
     echo "Остановка серверов..."
     if [ ! -z "$BACKEND_PID" ]; then
-        kill $BACKEND_PID 2>/dev/null
+        # uvicorn --reload создает дочерние процессы, убиваем всю группу
+        kill -- -$BACKEND_PID 2>/dev/null || kill $BACKEND_PID 2>/dev/null
     fi
     if [ ! -z "$FRONTEND_PID" ]; then
-        kill $FRONTEND_PID 2>/dev/null
+        kill -- -$FRONTEND_PID 2>/dev/null || kill $FRONTEND_PID 2>/dev/null
     fi
+    # Освобождаем порты на всякий случай
+    lsof -ti:$BACKEND_PORT 2>/dev/null | xargs kill -9 2>/dev/null
+    lsof -ti:$FRONTEND_PORT 2>/dev/null | xargs kill -9 2>/dev/null
+    echo "Серверы остановлены."
     exit 0
 }
 
@@ -36,7 +78,7 @@ trap cleanup SIGINT SIGTERM
 # Функция запуска backend
 start_backend() {
     echo ""
-    echo "📡 Запуск Backend (FastAPI + Uvicorn)..."
+    echo "--- Запуск Backend (FastAPI + Uvicorn) ---"
     echo "   Порт: $BACKEND_PORT"
     
     cd "$ADMIN_DIR"
@@ -45,6 +87,9 @@ start_backend() {
     if [ -d "venv" ]; then
         echo "   Активация venv..."
         source venv/bin/activate
+    elif [ -d "../venv" ]; then
+        echo "   Активация venv (parent)..."
+        source ../venv/bin/activate
     fi
     
     # Проверка зависимостей
@@ -60,9 +105,27 @@ start_backend() {
         sleep 1
     fi
     
-    echo "   ✅ Backend запущен на http://localhost:$BACKEND_PORT"
-    python app.py &
-    BACKEND_PID=$!
+    if [ "$MODE" = "dev" ]; then
+        echo "   [DEV] Uvicorn с --reload (автоперезагрузка при изменениях .py)"
+        echo "   Отслеживаемые директории: $ADMIN_DIR"
+        uvicorn app:socket_app \
+            --host 0.0.0.0 \
+            --port $BACKEND_PORT \
+            --reload \
+            --reload-dir "$ADMIN_DIR" \
+            --reload-include "*.py" \
+            --reload-include "*.js" \
+            --reload-exclude "frontend/*" \
+            --reload-exclude "__pycache__/*" &
+        BACKEND_PID=$!
+        echo "   Backend PID: $BACKEND_PID"
+    else
+        echo "   [PROD] Uvicorn без reload"
+        python app.py &
+        BACKEND_PID=$!
+    fi
+    
+    echo "   Backend: http://localhost:$BACKEND_PORT"
 }
 
 # Функция запуска frontend (dev mode)
@@ -224,8 +287,8 @@ case "$MODE" in
         echo "❌ Неизвестный режим: $MODE"
         echo ""
         echo "Доступные режимы:"
-        echo "  dev            - Разработка (Backend + Frontend Dev)"
-        echo "  prod           - Production (Backend + Static Build)"
+        echo "  dev            - Разработка: Backend + Frontend Dev"
+        echo "  prod           - Production: Backend + Static Build"
         echo "  backend-only   - Только Backend"
         echo "  frontend-only  - Только Frontend Dev"
         echo "  build          - Только сборка Frontend"

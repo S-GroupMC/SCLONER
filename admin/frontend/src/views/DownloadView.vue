@@ -114,6 +114,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ActiveDownloads from '../components/ActiveDownloads.vue'
+import { fetchJson } from '../utils/fetchApi'
 
 const router = useRouter()
 
@@ -138,15 +139,13 @@ async function prepareLanding() {
   error.value = ''
   
   try {
-    const res = await fetch('/api/prepare-landing', {
+    const data = await fetchJson('/api/prepare-landing', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: url.value })
     })
     
-    const data = await res.json()
-    
-    if (res.ok && data.folder_name) {
+    if (data.folder_name) {
       if (data.existing) {
         // Show modal with options for existing folder
         existingFolder.value = { name: data.folder_name, files: data.landing_meta?.files_count || 0 }

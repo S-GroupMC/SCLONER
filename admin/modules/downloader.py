@@ -5,6 +5,8 @@ import subprocess
 import threading
 import multiprocessing
 import os
+import re
+import shlex
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +40,54 @@ BLOCKED_DOMAINS = [
     'recaptcha.net', 'gstatic.com/recaptcha',
     'cookiebot.com', 'cookieconsent.', 'cookie-script.com',
     'trustpilot.com/bootstrap', 'widget.trustpilot.com',
+]
+
+# Reject URL patterns - useless/duplicate content per platform
+REJECT_URL_PATTERNS = [
+    # === SHOPIFY ===
+    r'/checkouts/',
+    r'\.oembed',
+    r'/cdn/shopifycloud/',
+    r'/cdn/shop/t/\d+/compiled_assets/',
+    r'/web-pixels-manager',
+    r'\?variant=',
+    r'/cart\.js',
+    r'/cart/add',
+    r'/cart/change',
+    r'/search\?',
+    r'/account/',
+    r'/policies/',
+    
+    # === RESPONSIVE IMAGE DUPLICATES ===
+    # Shopify width params (keep original, reject resized)
+    r'[&?]width=(240|352|480|535|600|720|832|940|1066|1200|1400|1600|1800|1920|2048|2560|3000|3200|3840)',
+    # Generic responsive image params
+    r'[&?]w=(100|150|200|300|400|500|600|700|800|900|1000|1100|1200|1400|1600|1800|2000|2400|2800|3200)',
+    r'[&?]size=',
+    r'[&?]resize=',
+    r'[&?]fit=',
+    r'[&?]quality=',
+    r'[&?]format=auto',
+    
+    # === WORDPRESS ===
+    r'/wp-admin/',
+    r'/wp-login\.php',
+    r'/wp-json/',
+    r'/xmlrpc\.php',
+    r'/feed/?$',
+    r'\?replytocom=',
+    r'/wp-comments-post\.php',
+    
+    # === WIX ===
+    r'/_api/',
+    r'/wix-code/',
+    r'/_serverless/',
+    
+    # === GENERAL ===
+    r'/cdn-cgi/',
+    r'\?preview_theme_id=',
+    r'\?cache=',
+    r'/api/2\d+/',
 ]
 
 # Allowed CDN patterns (only fonts and essential CSS/JS libraries)
@@ -218,8 +268,11 @@ def build_wget_command(job):
     
     cmd.extend(['-D', ','.join(domains_list)])
     
-    reject_domains = ','.join([f'*{d}*' for d in filter_config['blocked_domains'][:20]])
-    cmd.extend(['--reject-regex', reject_domains])
+    # Build combined reject regex: blocked domains + platform-specific patterns
+    reject_parts = [f'.*{d}.*' for d in filter_config['blocked_domains'][:20]]
+    reject_parts.extend(REJECT_URL_PATTERNS)
+    reject_regex = '|'.join(reject_parts)
+    cmd.extend(['--reject-regex', reject_regex])
     
     # Only span hosts if explicitly enabled AND only for allowed domains
     # By default, stay on the same domain to avoid downloading external sites
@@ -327,6 +380,24 @@ def build_httrack_command(job):
     for blocked in filter_config['blocked_domains']:
         cmd.append(f'-*{blocked}*')
     
+    # Platform-specific reject patterns (convert regex to httrack glob)
+    httrack_rejects = [
+        '*checkouts/*', '*.oembed*', '*/cdn/shopifycloud/*',
+        '*/web-pixels-manager*', '*?variant=*',
+        '*/cart.js*', '*/cart/add*', '*/cart/change*',
+        '*/account/*', '*/policies/*',
+        '*&width=*', '*?width=*', '*&w=*', '*?w=*',
+        '*&size=*', '*?size=*', '*&resize=*', '*?resize=*',
+        '*&fit=*', '*?fit=*', '*&quality=*', '*?quality=*',
+        '*?format=auto*',
+        '*/wp-admin/*', '*/wp-login.php*', '*/wp-json/*',
+        '*/xmlrpc.php*', '*?replytocom=*', '*/wp-comments-post.php*',
+        '*/_api/*', '*/wix-code/*', '*/_serverless/*',
+        '*/cdn-cgi/*', '*?preview_theme_id=*', '*?cache=*',
+    ]
+    for pattern in httrack_rejects:
+        cmd.append(f'-{pattern}')
+    
     cmd.append('-*')
     
     user_agent = opts.get('user_agent', '')
@@ -421,8 +492,82 @@ def run_single_engine(job, engine_name, cmd):
         return False
 
 
+def cleanup_rejected_content(job):
+    """Remove directories and files that match reject patterns (checkouts, shopifycloud, etc.)"""
+    if not job.output_dir.exists():
+        return
+    
+    # Directories to remove inside each domain folder
+    rejected_dirs = [
+        'checkouts', 'account', 'policies',
+    ]
+    # Subdirectories inside cdn/ to remove
+    rejected_cdn_dirs = [
+        'shopifycloud',
+    ]
+    # File patterns to remove
+    rejected_file_patterns = [
+        re.compile(r'\.oembed$'),
+    ]
+    
+    removed_files = 0
+    removed_dirs = 0
+    freed_bytes = 0
+    
+    for domain_folder in job.output_dir.iterdir():
+        if not domain_folder.is_dir() or domain_folder.name.startswith('_') or domain_folder.name in ('hts-cache', 'vue-app'):
+            continue
+        
+        # Remove rejected directories
+        for dirname in rejected_dirs:
+            target = domain_folder / dirname
+            if target.exists() and target.is_dir():
+                try:
+                    dir_size = sum(f.stat().st_size for f in target.rglob('*') if f.is_file())
+                    shutil.rmtree(target)
+                    removed_dirs += 1
+                    freed_bytes += dir_size
+                    job.output_lines.append(f"[Cleanup] Removed {domain_folder.name}/{dirname}")
+                except Exception as e:
+                    job.output_lines.append(f"[Cleanup] Error removing {dirname}: {e}")
+        
+        # Remove rejected cdn subdirectories
+        cdn_dir = domain_folder / 'cdn'
+        if cdn_dir.exists():
+            for dirname in rejected_cdn_dirs:
+                target = cdn_dir / dirname
+                if target.exists() and target.is_dir():
+                    try:
+                        dir_size = sum(f.stat().st_size for f in target.rglob('*') if f.is_file())
+                        shutil.rmtree(target)
+                        removed_dirs += 1
+                        freed_bytes += dir_size
+                        job.output_lines.append(f"[Cleanup] Removed {domain_folder.name}/cdn/{dirname}")
+                    except Exception as e:
+                        job.output_lines.append(f"[Cleanup] Error removing cdn/{dirname}: {e}")
+        
+        # Remove rejected files
+        for f in domain_folder.rglob('*'):
+            if f.is_file():
+                for pattern in rejected_file_patterns:
+                    if pattern.search(f.name):
+                        try:
+                            freed_bytes += f.stat().st_size
+                            f.unlink()
+                            removed_files += 1
+                        except:
+                            pass
+                        break
+    
+    if removed_dirs > 0 or removed_files > 0:
+        from .utils import format_size
+        job.output_lines.append(
+            f"[Cleanup] Removed {removed_dirs} dirs, {removed_files} files, freed {format_size(freed_bytes)}"
+        )
+
+
 def cleanup_external_domains(job):
-    """Remove folders of external domains"""
+    """Remove folders of external domains and rejected content"""
     filter_config = get_domain_filter_config(job)
     
     if not job.output_dir.exists():
@@ -448,6 +593,9 @@ def cleanup_external_domains(job):
     
     if removed_count > 0:
         job.output_lines.append(f"[Cleanup] Removed {removed_count} external domain folders")
+    
+    # Also clean up rejected content inside allowed domains
+    cleanup_rejected_content(job)
 
 
 def run_wget_job(job_id):
@@ -534,29 +682,10 @@ def run_wget_job(job_id):
         job.finished_at = datetime.now()
         update_job_stats(job)
         
-        # Auto-generate preview screenshot and clean HTML
+        # Auto-generate preview screenshot
         if job.status == 'completed':
-            try:
-                # Clean HTML: remove trackers and fix internal links
-                from .html_cleaner import clean_downloaded_site
-                parsed = urlparse(job.url)
-                main_domain = parsed.netloc.replace('www.', '')
-                
-                job.output_lines.append("[WCLoner] Очистка HTML от трекеров...")
-                stats = clean_downloaded_site(job.output_dir, main_domain)
-                
-                if stats.get('error'):
-                    job.output_lines.append(f"[WCLoner] ⚠️ {stats['error']}")
-                else:
-                    job.output_lines.append(f"[WCLoner] ✅ Обработано {stats['modified_files']}/{stats['total_files']} файлов")
-                    if stats['trackers_removed'] > 0:
-                        job.output_lines.append(f"[WCLoner] ✅ Удалено трекеров: {stats['trackers_removed']}")
-                    if stats['links_rewritten'] > 0:
-                        job.output_lines.append(f"[WCLoner] ✅ Исправлено ссылок: {stats['links_rewritten']}")
-                    if stats['downloaded_domains']:
-                        job.output_lines.append(f"[WCLoner] 📁 Домены: {', '.join(stats['downloaded_domains'])}")
-            except Exception as e:
-                job.output_lines.append(f"[WCLoner] ❌ Ошибка очистки HTML: {str(e)}")
+            # NOTE: Автоматическая очистка HTML отключена - может повредить верстку.
+            # Используйте таб "Трекеры" для просмотра найденных трекеров.
             
             try:
                 from .file_manager import generate_preview_screenshot
@@ -578,6 +707,27 @@ def run_wget_job(job_id):
                     job.output_lines.append("[WCLoner] ⚠️ Preview не создан")
             except Exception as e:
                 job.output_lines.append(f"[WCLoner] ❌ Ошибка preview: {str(e)}")
+            
+            # Auto-generate Vue wrapper and backend server
+            vue_dir = job.output_dir / 'vue-app'
+            backend_file = job.output_dir / 'backend-server.js'
+            if vue_dir.exists() and (vue_dir / 'package.json').exists() and backend_file.exists():
+                job.output_lines.append("[WCLoner] Vue обёртка и Node.js сервер уже существуют")
+            else:
+                try:
+                    from .file_manager import generate_vue_wrapper
+                    parsed = urlparse(job.url)
+                    main_domain = parsed.netloc.replace('www.', '')
+                    
+                    job.output_lines.append("[WCLoner] Генерация Vue обёртки и Node.js сервера...")
+                    success = generate_vue_wrapper(job.output_dir, main_domain, 3000, 3001)
+                    
+                    if success:
+                        job.output_lines.append("[WCLoner] ✅ Vue обёртка и Node.js сервер созданы")
+                    else:
+                        job.output_lines.append("[WCLoner] ⚠ Не удалось создать Vue обёртку")
+                except Exception as e:
+                    job.output_lines.append(f"[WCLoner] ❌ Ошибка генерации скриптов: {str(e)}")
         
     except Exception as e:
         job.status = 'failed'
@@ -622,7 +772,8 @@ def start_job_process(job_id):
     # Start subprocess with shell redirect to avoid buffer issues
     try:
         # Use shell to redirect output to file
-        cmd_str = ' '.join(f'"{c}"' if ' ' in c else c for c in cmd)
+        # Quote ALL arguments to prevent shell interpretation of |, ?, (, ), *, $ etc.
+        cmd_str = ' '.join(shlex.quote(c) for c in cmd)
         shell_cmd = f'{cmd_str} > "{log_file}" 2>&1'
         
         process = subprocess.Popen(
@@ -691,29 +842,10 @@ def start_job_process(job_id):
                 job.status = 'failed'
             job.finished_at = datetime.now()
             
-            # Auto-generate preview and clean HTML
+            # Auto-generate preview
             if job.status == 'completed':
-                try:
-                    # Clean HTML: remove trackers and fix internal links
-                    from .html_cleaner import clean_downloaded_site
-                    parsed = urlparse(job.url)
-                    main_domain = parsed.netloc.replace('www.', '')
-                    
-                    job.output_lines.append("[WCLoner] Очистка HTML от трекеров...")
-                    stats = clean_downloaded_site(job.output_dir, main_domain)
-                    
-                    if stats.get('error'):
-                        job.output_lines.append(f"[WCLoner] ⚠️ {stats['error']}")
-                    else:
-                        job.output_lines.append(f"[WCLoner] ✅ Обработано {stats['modified_files']}/{stats['total_files']} файлов")
-                        if stats['trackers_removed'] > 0:
-                            job.output_lines.append(f"[WCLoner] ✅ Удалено трекеров: {stats['trackers_removed']}")
-                        if stats['links_rewritten'] > 0:
-                            job.output_lines.append(f"[WCLoner] ✅ Исправлено ссылок: {stats['links_rewritten']}")
-                        if stats['downloaded_domains']:
-                            job.output_lines.append(f"[WCLoner] 📁 Домены: {', '.join(stats['downloaded_domains'])}")
-                except Exception as e:
-                    job.output_lines.append(f"[WCLoner] ❌ Ошибка очистки HTML: {e}")
+                # NOTE: Автоматическая очистка HTML отключена - может повредить верстку.
+                # Используйте таб "Трекеры" для просмотра найденных трекеров.
                 
                 try:
                     from .file_manager import generate_preview_screenshot
@@ -728,6 +860,27 @@ def start_job_process(job_id):
                         job.output_lines.append(f"[WCLoner] ✅ Preview: {preview_path.name}")
                 except Exception as e:
                     job.output_lines.append(f"[WCLoner] ❌ Preview error: {e}")
+                
+                # Auto-generate Vue wrapper and backend server
+                vue_dir = job.output_dir / 'vue-app'
+                backend_file = job.output_dir / 'backend-server.js'
+                if vue_dir.exists() and (vue_dir / 'package.json').exists() and backend_file.exists():
+                    job.output_lines.append("[WCLoner] Vue обёртка и Node.js сервер уже существуют")
+                else:
+                    try:
+                        from .file_manager import generate_vue_wrapper
+                        parsed = urlparse(job.url)
+                        main_domain = parsed.netloc.replace('www.', '')
+                        
+                        job.output_lines.append("[WCLoner] Генерация Vue обёртки и Node.js сервера...")
+                        success = generate_vue_wrapper(job.output_dir, main_domain, 3000, 3001)
+                        
+                        if success:
+                            job.output_lines.append("[WCLoner] ✅ Vue обёртка и Node.js сервер созданы")
+                        else:
+                            job.output_lines.append("[WCLoner] ⚠ Не удалось создать Vue обёртку")
+                    except Exception as e:
+                        job.output_lines.append(f"[WCLoner] ❌ Ошибка генерации скриптов: {e}")
             
             save_jobs()
         

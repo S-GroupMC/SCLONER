@@ -41,11 +41,22 @@ from modules.file_manager import (
 )
 from modules.server_manager import (
     get_domain_ports, find_free_port, is_port_in_use, check_process_running,
-    get_servers_status, start_vue_server, start_backend_server, stop_servers, stop_vue_server
+    get_servers_status, start_vue_server, start_backend_server, stop_servers, stop_vue_server,
+    kill_registered_servers
 )
 
 # FastAPI app
 app = FastAPI(title="Wget Web Admin", version="2.0")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Load jobs on startup (needed for uvicorn --reload)."""
+    print(f"[WCLoner] Starting up...")
+    print(f"[WCLoner] Using wget2: {WGET2_PATH}")
+    print(f"[WCLoner] Downloads dir: {DOWNLOADS_DIR}")
+    load_jobs()
+    kill_registered_servers()
 
 # Socket.IO for WebSocket support
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
@@ -689,6 +700,17 @@ async def get_file_tree(folder_name):
         return items
     
     return build_tree(folder_path)
+
+
+@app.get('/api/downloads/{folder_name}/trackers')
+async def scan_trackers_endpoint(folder_name):
+    """Scan downloaded site for tracking scripts without removing them."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    from modules.html_cleaner import scan_trackers
+    return scan_trackers(folder_path)
 
 
 @app.get('/api/downloads/{folder_name}/scripts-status')

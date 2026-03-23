@@ -311,6 +311,8 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLandingsStore } from '../stores/landings'
 import ActiveDownloads from '../components/ActiveDownloads.vue'
+import { fetchApi } from '../utils/fetchApi'
+import { config } from '../config'
 
 const router = useRouter()
 const landingsStore = useLandingsStore()
@@ -348,9 +350,6 @@ function showAlert(title, message) {
 }
 
 // Артисты из API
-const ARTISTS_API = 'https://adminzone.space/api/v1/public/artists'
-const API_KEY = 'sk-stickets-public-2026'
-const PER_PAGE = 20
 
 const artists = ref([])
 const artistsLoading = ref(false)
@@ -359,27 +358,32 @@ const artistsPage = ref(1)
 const artistSearch = ref('')
 let searchTimeout = null
 
-const artistsTotalPages = computed(() => Math.ceil(artistsTotal.value / PER_PAGE) || 1)
+const artistsTotalPages = computed(() => Math.ceil(artistsTotal.value / config.artistsPerPage) || 1)
 
 async function loadArtists() {
   artistsLoading.value = true
   try {
+    if (!config.artistsApiUrl) {
+      artists.value = []
+      return
+    }
+    
     const params = new URLSearchParams({
       has_landing: 'true',
-      limit: PER_PAGE.toString(),
-      offset: ((artistsPage.value - 1) * PER_PAGE).toString()
+      limit: config.artistsPerPage.toString(),
+      offset: ((artistsPage.value - 1) * config.artistsPerPage).toString()
     })
     
     if (artistSearch.value.trim()) {
       params.append('search', artistSearch.value.trim())
     }
     
-    const response = await fetch(`${ARTISTS_API}?${params}`, {
-      headers: { 'X-API-Key': API_KEY }
-    })
+    const headers = {}
+    if (config.artistsApiKey) {
+      headers['X-API-Key'] = config.artistsApiKey
+    }
     
-    if (!response.ok) throw new Error('Ошибка загрузки артистов')
-    
+    const response = await fetchApi(`${config.artistsApiUrl}?${params}`, { headers })
     const data = await response.json()
     artists.value = data.artists || data.data || data || []
     artistsTotal.value = data.total || data.count || artists.value.length

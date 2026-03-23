@@ -238,6 +238,63 @@ def process_html_file(file_path: Path, output_dir: Path, main_domain: str, downl
     return {}
 
 
+def scan_trackers(output_dir: Path) -> dict:
+    """
+    Scan all HTML files for tracking patterns WITHOUT removing them.
+    Returns list of found trackers with file, type, and snippet.
+    """
+    output_dir = Path(output_dir)
+    
+    if not output_dir.exists():
+        return {'error': 'Directory not found', 'trackers': [], 'summary': {}}
+    
+    exclude_dirs = {'vue-app', 'node_modules', '_wcloner', '.git'}
+    html_files = []
+    for html_file in output_dir.rglob('*.html'):
+        if not any(part in exclude_dirs for part in html_file.parts):
+            html_files.append(html_file)
+    
+    trackers = []
+    summary = {}
+    
+    for html_file in html_files:
+        try:
+            content = html_file.read_text(encoding='utf-8')
+        except Exception:
+            continue
+        
+        rel_path = str(html_file.relative_to(output_dir))
+        
+        for pattern, name in TRACKING_PATTERNS:
+            matches = list(re.finditer(pattern, content, re.IGNORECASE | re.MULTILINE))
+            for match in matches:
+                # Get snippet (first 200 chars of match)
+                snippet = match.group(0)[:200].strip()
+                if len(match.group(0)) > 200:
+                    snippet += '...'
+                
+                # Find line number
+                line_num = content[:match.start()].count('\n') + 1
+                
+                trackers.append({
+                    'type': name,
+                    'file': rel_path,
+                    'line': line_num,
+                    'snippet': snippet,
+                    'size': len(match.group(0))
+                })
+                
+                summary[name] = summary.get(name, 0) + 1
+    
+    return {
+        'trackers': trackers,
+        'summary': summary,
+        'total_files_scanned': len(html_files),
+        'total_trackers': len(trackers),
+        'files_with_trackers': len(set(t['file'] for t in trackers))
+    }
+
+
 def clean_downloaded_site(output_dir: Path, main_domain: str) -> dict:
     """
     Clean all HTML files in downloaded site:

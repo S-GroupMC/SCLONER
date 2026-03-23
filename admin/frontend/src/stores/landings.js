@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { fetchJson } from '../utils/fetchApi'
 
 export const useLandingsStore = defineStore('landings', () => {
   const landings = ref([])
@@ -8,8 +9,7 @@ export const useLandingsStore = defineStore('landings', () => {
   async function loadLandings() {
     loading.value = true
     try {
-      const response = await fetch('/api/landings')
-      landings.value = await response.json()
+      landings.value = await fetchJson('/api/landings')
     } catch (error) {
       console.error('[Landings] Error loading:', error)
     } finally {
@@ -19,12 +19,10 @@ export const useLandingsStore = defineStore('landings', () => {
   
   async function deleteFolder(folderName) {
     try {
-      const response = await fetch(`/api/downloads/${encodeURIComponent(folderName)}`, {
+      await fetchJson(`/api/downloads/${encodeURIComponent(folderName)}`, {
         method: 'DELETE'
       })
-      if (response.ok) {
-        await loadLandings()
-      }
+      await loadLandings()
     } catch (error) {
       console.error('[Landings] Error deleting:', error)
       throw error
@@ -33,8 +31,7 @@ export const useLandingsStore = defineStore('landings', () => {
   
   async function checkChanges(folderName) {
     try {
-      const response = await fetch(`/api/check-changes/${encodeURIComponent(folderName)}`)
-      return await response.json()
+      return await fetchJson(`/api/check-changes/${encodeURIComponent(folderName)}`)
     } catch (error) {
       console.error('[Landings] Error checking changes:', error)
       throw error

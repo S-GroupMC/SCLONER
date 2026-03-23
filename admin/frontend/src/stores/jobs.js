@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { fetchJson } from '../utils/fetchApi'
+import { config } from '../config'
 
 export const useJobsStore = defineStore('jobs', () => {
   const jobs = ref(new Map())
@@ -17,16 +19,15 @@ export const useJobsStore = defineStore('jobs', () => {
   let pollInterval = null
   
   function initSocket() {
-    // Загружаем задачи и запускаем периодическое обновление
+    // Загружаем задачи один раз, polling запускается только если есть активные
     loadJobs()
-    startPolling()
   }
   
   function startPolling() {
     if (pollInterval) return
     pollInterval = setInterval(() => {
       loadJobs()
-    }, 3000) // Обновляем каждые 3 секунды
+    }, config.pollInterval)
   }
   
   function stopPolling() {
@@ -38,11 +39,18 @@ export const useJobsStore = defineStore('jobs', () => {
   
   async function loadJobs() {
     try {
-      const response = await fetch('/api/jobs')
-      const jobsList = await response.json()
+      const jobsList = await fetchJson('/api/jobs')
       jobsList.forEach(job => {
         jobs.value.set(job.id, job)
       })
+      
+      // Polling только когда есть активные задачи
+      const hasActive = jobsList.some(j => ['running', 'pending', 'paused'].includes(j.status))
+      if (hasActive && !pollInterval) {
+        startPolling()
+      } else if (!hasActive && pollInterval) {
+        stopPolling()
+      }
     } catch (error) {
       console.error('[Jobs] Error loading jobs:', error)
     }
@@ -50,13 +58,13 @@ export const useJobsStore = defineStore('jobs', () => {
   
   async function startJob(url, options) {
     try {
-      const response = await fetch('/api/jobs', {
+      const job = await fetchJson('/api/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, ...options })
       })
-      const job = await response.json()
       jobs.value.set(job.id, job)
+      startPolling()
       return job
     } catch (error) {
       console.error('[Jobs] Error starting job:', error)
@@ -66,10 +74,9 @@ export const useJobsStore = defineStore('jobs', () => {
   
   async function stopJob(jobId) {
     try {
-      const response = await fetch(`/api/jobs/${jobId}/stop`, {
+      const job = await fetchJson(`/api/jobs/${jobId}/stop`, {
         method: 'POST'
       })
-      const job = await response.json()
       jobs.value.set(job.id, job)
     } catch (error) {
       console.error('[Jobs] Error stopping job:', error)
@@ -78,10 +85,9 @@ export const useJobsStore = defineStore('jobs', () => {
   
   async function pauseJob(jobId) {
     try {
-      const response = await fetch(`/api/jobs/${jobId}/pause`, {
+      const job = await fetchJson(`/api/jobs/${jobId}/pause`, {
         method: 'POST'
       })
-      const job = await response.json()
       jobs.value.set(job.id, job)
     } catch (error) {
       console.error('[Jobs] Error pausing job:', error)
@@ -90,10 +96,9 @@ export const useJobsStore = defineStore('jobs', () => {
   
   async function resumeJob(jobId) {
     try {
-      const response = await fetch(`/api/jobs/${jobId}/resume`, {
+      const job = await fetchJson(`/api/jobs/${jobId}/resume`, {
         method: 'POST'
       })
-      const job = await response.json()
       jobs.value.set(job.id, job)
     } catch (error) {
       console.error('[Jobs] Error resuming job:', error)

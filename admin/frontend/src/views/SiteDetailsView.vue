@@ -410,6 +410,15 @@
             <span v-if="changesData && changesData.changed > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-red-100 text-red-700">{{ changesData.changed }}</span>
           </button>
           <button 
+            @click="activeTab = 'trackers'; if (!trackersData) loadTrackers()"
+            class="px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center space-x-2"
+            :class="activeTab === 'trackers' ? 'border-yellow-600 text-yellow-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+          >
+            <i class="fas fa-bug"></i>
+            <span>Трекеры</span>
+            <span v-if="trackersData?.total_trackers > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full" :class="activeTab === 'trackers' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'">{{ trackersData.total_trackers }}</span>
+          </button>
+          <button 
             @click="activeTab = 'info'"
             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center space-x-2"
             :class="activeTab === 'info' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
@@ -1154,6 +1163,107 @@
         </div>
       </div>
       
+      <!-- ТАБ: Трекеры -->
+      <div v-show="activeTab === 'trackers'" class="card">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold text-gray-900 flex items-center">
+            <i class="fas fa-bug mr-2 text-yellow-600"></i>
+            Найденные трекеры
+          </h2>
+          <button 
+            @click="loadTrackers()"
+            :disabled="trackersLoading"
+            class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 text-sm font-medium transition-all disabled:opacity-50"
+          >
+            <i :class="trackersLoading ? 'fas fa-spinner fa-spin' : 'fas fa-search'" class="mr-2"></i>
+            {{ trackersLoading ? 'Сканирование...' : 'Сканировать' }}
+          </button>
+        </div>
+        
+        <!-- Загрузка -->
+        <div v-if="trackersLoading" class="flex items-center justify-center py-12">
+          <i class="fas fa-spinner fa-spin text-3xl text-yellow-500 mr-3"></i>
+          <span class="text-gray-500">Сканирование HTML файлов...</span>
+        </div>
+        
+        <!-- Результаты -->
+        <div v-else-if="trackersData">
+          <!-- Сводка -->
+          <div class="grid grid-cols-3 gap-4 mb-6">
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold" :class="trackersData.total_trackers > 0 ? 'text-red-600' : 'text-green-600'">{{ trackersData.total_trackers }}</div>
+              <div class="text-xs text-gray-500 mt-1">Трекеров найдено</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-gray-700">{{ trackersData.files_with_trackers }}</div>
+              <div class="text-xs text-gray-500 mt-1">Файлов с трекерами</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-gray-700">{{ trackersData.total_files_scanned }}</div>
+              <div class="text-xs text-gray-500 mt-1">HTML файлов проверено</div>
+            </div>
+          </div>
+          
+          <!-- Сводка по типам -->
+          <div v-if="Object.keys(trackersData.summary || {}).length > 0" class="mb-6">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">По типам:</h3>
+            <div class="flex flex-wrap gap-2">
+              <span 
+                v-for="(count, type) in trackersData.summary" 
+                :key="type"
+                class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium"
+                :class="trackerTypeColor(type)"
+              >
+                <i class="fas fa-exclamation-triangle mr-1.5"></i>
+                {{ type }} <span class="ml-1 font-bold">x{{ count }}</span>
+              </span>
+            </div>
+          </div>
+          
+          <!-- Список трекеров -->
+          <div v-if="trackersData.trackers?.length > 0" class="space-y-3">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Детали:</h3>
+            <div 
+              v-for="(tracker, idx) in trackersData.trackers" 
+              :key="idx"
+              class="border rounded-lg p-3 hover:border-yellow-300 transition-colors"
+            >
+              <div class="flex items-start justify-between mb-2">
+                <div class="flex items-center space-x-2">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" :class="trackerTypeColor(tracker.type)">
+                    {{ tracker.type }}
+                  </span>
+                  <span class="text-xs text-gray-400">{{ tracker.size }} bytes</span>
+                </div>
+              </div>
+              <div class="flex items-center text-xs text-gray-500 mb-2">
+                <i class="fas fa-file-code mr-1.5"></i>
+                <span class="font-mono">{{ tracker.file }}</span>
+                <span class="mx-1.5">:</span>
+                <span class="text-gray-400">line {{ tracker.line }}</span>
+              </div>
+              <div class="bg-gray-900 rounded p-2 overflow-x-auto">
+                <code class="text-xs text-green-400 font-mono whitespace-pre-wrap break-all">{{ tracker.snippet }}</code>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Нет трекеров -->
+          <div v-else class="bg-green-50 rounded-lg p-8 text-center">
+            <i class="fas fa-check-circle text-4xl text-green-500 mb-3"></i>
+            <p class="text-green-700 font-medium">Трекеры не найдены!</p>
+            <p class="text-green-600 text-sm mt-1">Сайт чист от известных трекеров</p>
+          </div>
+        </div>
+        
+        <!-- Пустое состояние -->
+        <div v-else class="bg-gray-50 rounded-lg p-8 text-center text-gray-500">
+          <i class="fas fa-bug text-4xl mb-3"></i>
+          <p>Нажмите "Сканировать" для поиска трекеров в HTML файлах</p>
+          <p class="text-xs mt-2">Google Analytics, Facebook Pixel, Hotjar, Shopify Analytics и др.</p>
+        </div>
+      </div>
+      
       <!-- ТАБ: Информация -->
       <div v-show="activeTab === 'info'" class="card">
         <h2 class="text-lg font-bold text-gray-900 flex items-center mb-4">
@@ -1326,7 +1436,7 @@
             </div>
             <div class="flex-1">
               <div class="font-medium text-gray-900 flex items-center">
-                Vue обёртка
+                Vue + Node.js сервер
                 <span v-if="startingServer === 'vue'" class="ml-2 text-xs text-yellow-600 font-normal">
                   <i class="fas fa-spinner fa-spin"></i> Запуск...
                 </span>
@@ -1341,7 +1451,7 @@
                 </span>
               </div>
               <div class="text-xs text-gray-500 mt-1">
-                {{ startingServer === 'vue' ? 'Установка npm и запуск...' : 'SPA с роутингом и SEO' }}
+                SPA с роутингом, SEO и CORS сервер
               </div>
             </div>
             <!-- Кнопка перезапуска Vue сервера -->
@@ -1350,44 +1460,85 @@
               @click.stop="restartVueServer"
               :disabled="restartingVue"
               class="ml-2 px-2 py-1 text-xs rounded bg-yellow-100 hover:bg-yellow-200 text-yellow-700 transition-colors"
-              title="Перезапустить Vue сервер"
+              title="Перезапустить сервер"
             >
               <i :class="restartingVue ? 'fas fa-spinner fa-spin' : 'fas fa-sync-alt'"></i>
             </button>
           </button>
+        </div>
+        
+        <!-- Прогресс запуска серверов -->
+        <div v-if="serverLaunchSteps.length > 0" class="border-t pt-4 mt-2">
+          <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">
+            <i class="fas fa-terminal mr-1"></i> Процесс запуска
+          </h4>
+          <div class="space-y-1.5 max-h-48 overflow-y-auto">
+            <div 
+              v-for="(s, idx) in serverLaunchSteps" 
+              :key="idx"
+              class="flex items-start text-xs font-mono px-2 py-1 rounded"
+              :class="{
+                'bg-green-50 text-green-700': s.status === 'ok',
+                'bg-red-50 text-red-700': s.status === 'error',
+                'bg-yellow-50 text-yellow-700': s.status === 'warn' || s.status === 'running',
+                'bg-gray-50 text-gray-500': s.status === 'skip'
+              }"
+            >
+              <span class="w-4 mr-2 flex-shrink-0 text-center">
+                <i v-if="s.status === 'ok'" class="fas fa-check text-green-500"></i>
+                <i v-else-if="s.status === 'error'" class="fas fa-times text-red-500"></i>
+                <i v-else-if="s.status === 'warn'" class="fas fa-exclamation text-yellow-500"></i>
+                <i v-else-if="s.status === 'running'" class="fas fa-spinner fa-spin text-yellow-500"></i>
+                <i v-else class="fas fa-minus text-gray-400"></i>
+              </span>
+              <span class="font-semibold mr-2 flex-shrink-0" style="min-width: 120px">{{ stepLabel(s.name) }}</span>
+              <span class="text-gray-500 truncate" :title="s.detail">{{ s.detail }}</span>
+            </div>
+            <!-- Spinner для текущего шага -->
+            <div v-if="startingServer === 'vue' && !serverLaunchError" class="flex items-center text-xs font-mono px-2 py-1 bg-blue-50 text-blue-600 rounded">
+              <i class="fas fa-spinner fa-spin mr-2"></i>
+              <span>Ожидание ответа сервера...</span>
+            </div>
+          </div>
           
-          <button 
-            @click="openBackendServer"
-            :disabled="!scriptsStatus?.backend_server?.ready || startingServer === 'backend'"
-            class="w-full flex items-start p-3 border rounded-lg transition-colors text-left"
-            :class="scriptsStatus?.backend_server?.ready ? 'border-blue-200 hover:bg-blue-50' : 'border-gray-200 opacity-50 cursor-not-allowed'"
-          >
-            <div class="relative mr-3 mt-0.5">
-              <i v-if="startingServer === 'backend'" class="fas fa-spinner fa-spin text-xl text-green-600"></i>
-              <i v-else class="fab fa-node-js text-xl text-green-600"></i>
-              <span v-if="runningServers.backend" class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" title="Сервер запущен"></span>
+          <!-- Ошибка -->
+          <div v-if="serverLaunchError" class="mt-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            {{ serverLaunchError }}
+          </div>
+          
+          <!-- Успех + Кнопки -->
+          <div v-if="!startingServer && !serverLaunchError && serverLaunchSteps.length > 0 && serverLaunchSteps[serverLaunchSteps.length - 1]?.status === 'ok'" class="mt-3">
+            <div class="p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 flex items-center">
+              <i class="fas fa-check-circle mr-1"></i> Серверы запущены успешно
             </div>
-            <div class="flex-1">
-              <div class="font-medium text-gray-900 flex items-center">
-                Node.js сервер
-                <span v-if="startingServer === 'backend'" class="ml-2 text-xs text-yellow-600 font-normal">
-                  <i class="fas fa-spinner fa-spin"></i> Запуск...
-                </span>
-                <span v-else-if="runningServers.backend" class="ml-2 text-xs text-green-600 font-normal">
-                  <i class="fas fa-play-circle"></i> :{{ runningServers.backend.port }}
-                </span>
-                <span v-else-if="scriptsStatus?.backend_server?.ready" class="ml-2 text-xs text-blue-600">
-                  <i class="fas fa-check-circle"></i> Готово
-                </span>
-                <span v-else class="ml-2 text-xs text-gray-400">
-                  <i class="fas fa-times-circle"></i> Не создано
-                </span>
-              </div>
-              <div class="text-xs text-gray-500 mt-1">
-                {{ startingServer === 'backend' ? 'Запуск сервера...' : 'Сервер статики с CORS' }}
-              </div>
+            <div class="mt-2 flex gap-2">
+              <button 
+                @click="openVueSite"
+                class="flex-1 px-4 py-2.5 text-sm font-semibold rounded-lg text-white bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2"
+              >
+                <i class="fas fa-external-link-alt"></i> Открыть сайт
+              </button>
+              <button 
+                @click="restartAndRecheck"
+                :disabled="startingServer === 'restarting'"
+                class="px-4 py-2.5 text-sm font-semibold rounded-lg text-white bg-gradient-to-r from-orange-400 to-red-500 hover:from-orange-500 hover:to-red-600 shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <i :class="startingServer === 'restarting' ? 'fas fa-spinner fa-spin' : 'fas fa-redo'"></i> Перезапустить
+              </button>
             </div>
-          </button>
+          </div>
+          
+          <!-- Копировать логи -->
+          <div class="mt-2 flex justify-end">
+            <button 
+              @click="copyLaunchLogs"
+              class="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              title="Скопировать логи запуска"
+            >
+              <i class="fas fa-copy mr-1"></i> Копировать логи
+            </button>
+          </div>
         </div>
         
         <!-- Кнопка генерации если ничего не готово -->
@@ -1432,7 +1583,7 @@
         <div class="bg-blue-50 rounded-lg p-3 mb-4">
           <div class="text-sm text-blue-800">
             <i class="fas fa-info-circle mr-2"></i>
-            После запуска откройте: <strong>http://localhost:3001</strong>
+            После запуска откройте: <strong>http://localhost:{{ config.defaultBackendPort }}</strong>
           </div>
         </div>
         
@@ -1854,6 +2005,8 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useLandingsStore } from '../stores/landings'
+import { fetchApi, fetchJson } from '../utils/fetchApi'
+import { config } from '../config'
 
 const route = useRoute()
 const router = useRouter()
@@ -1867,6 +2020,8 @@ const sortBy = ref('tag')
 const filterTag = ref('')
 const onlyRelevant = ref(false)
 const activeTab = ref('subdomains')
+const trackersData = ref(null)
+const trackersLoading = ref(false)
 const fileTreeData = ref(null)
 const fileTreeLoading = ref(false)
 const expandedFolders = ref({})
@@ -1900,6 +2055,8 @@ const showBackendModal = ref(false)
 const startingServer = ref(null)  // 'vue' | 'backend' | null
 const runningServers = ref({ vue: false, backend: false })
 const restartingVue = ref(false)
+const serverLaunchSteps = ref([])
+const serverLaunchError = ref(null)
 
 // Toast notifications system
 const toasts = ref([])
@@ -1941,7 +2098,7 @@ const scriptsOptions = ref({
   vueWrapper: true,
   backendServer: true,
   moveToSite: true,
-  port: 3000
+  port: config.defaultServerPort
 })
 
 // Download wizard state
@@ -1955,7 +2112,7 @@ const scanResult = ref(null)
 const scanStatus = ref('idle') // idle, running, completed
 const selectedDomains = ref({})
 const domainEngines = ref({}) // Движок для каждого домена: { 'domain.com': 'wget2' }
-const downloadDepth = ref(5)
+const downloadDepth = ref(config.defaultDownloadDepth)
 
 const engines = [
   { value: 'wget2', label: 'wget2', icon: 'fas fa-bolt', color: '#3b82f6', desc: 'Быстрый, HTTP/2' },
@@ -2239,16 +2396,74 @@ function toggleAllFolders() {
   }
 }
 
+async function loadTrackers() {
+  trackersLoading.value = true
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/trackers`)
+    trackersData.value = data
+  } catch (err) {
+    console.error('Error loading trackers:', err)
+    showError('Ошибка сканирования трекеров: ' + err.message)
+  } finally {
+    trackersLoading.value = false
+  }
+}
+
+function trackerTypeColor(type) {
+  const colors = {
+    'Google Tag Manager': 'bg-blue-100 text-blue-700',
+    'GTM noscript': 'bg-blue-100 text-blue-700',
+    'Google Analytics': 'bg-orange-100 text-orange-700',
+    'Google Site Verification': 'bg-gray-100 text-gray-700',
+    'Facebook Pixel': 'bg-indigo-100 text-indigo-700',
+    'Facebook Pixel noscript': 'bg-indigo-100 text-indigo-700',
+    'TradeDesk': 'bg-purple-100 text-purple-700',
+    'BubbleUp mydata': 'bg-pink-100 text-pink-700',
+    'Shopify web-pixels-manager': 'bg-green-100 text-green-700',
+    'Shopify Trekkie': 'bg-green-100 text-green-700',
+    'Cookiebot': 'bg-yellow-100 text-yellow-700',
+    'Hotjar': 'bg-red-100 text-red-700',
+    'Preconnect monorail': 'bg-gray-100 text-gray-600',
+    'DNS prefetch shop.app': 'bg-gray-100 text-gray-600',
+  }
+  return colors[type] || 'bg-yellow-100 text-yellow-700'
+}
+
 async function loadFileTree() {
   fileTreeLoading.value = true
   try {
-    const response = await fetch(`/api/file-tree/${folderName.value}`)
-    const data = await response.json()
-    fileTreeData.value = data
+    const data = await fetchJson(`/api/file-tree/${folderName.value}`)
+    
+    // API returns hierarchical tree with children - flatten to file list
+    const flatFiles = []
+    function flattenTree(nodes) {
+      for (const node of nodes) {
+        if (node.type === 'directory' && node.children) {
+          flattenTree(node.children)
+        } else if (node.type === 'file') {
+          const ext = node.name.includes('.') ? node.name.split('.').pop().toLowerCase() : ''
+          const typeMap = { html: 'html', htm: 'html', css: 'css', js: 'js', png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', svg: 'image', webp: 'image', ico: 'image' }
+          flatFiles.push({
+            name: node.name,
+            path: node.path,
+            size: node.size || 0,
+            size_bytes: node.size || 0,
+            type: typeMap[ext] || 'other',
+            ext: ext
+          })
+        }
+      }
+    }
+    
+    const treeNodes = Array.isArray(data) ? data : (data.files || data.children || [])
+    flattenTree(treeNodes)
+    
+    fileTreeData.value = { files: flatFiles }
+    
     // Auto-expand first level
-    if (data.files) {
+    if (flatFiles.length) {
       const firstLevel = {}
-      for (const f of data.files) {
+      for (const f of flatFiles) {
         const firstDir = f.path.split('/')[0]
         if (f.path.includes('/')) {
           firstLevel[firstDir] = true
@@ -2287,7 +2502,7 @@ async function redownloadPage(file) {
   }
   showConfirm('Перескачать файл?', `Перескачать "${file.name}"?\n\nURL: ${originalUrl}`, async () => {
     try {
-      const response = await fetch('/api/landings/redownload', {
+      const data = await fetchJson('/api/landings/redownload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2296,7 +2511,6 @@ async function redownloadPage(file) {
           config_key: ''
         })
       })
-      const data = await response.json()
       if (data.id) {
         showSuccess(`Перескачивание запущено! Job ID: ${data.id}`)
       } else {
@@ -2318,8 +2532,7 @@ async function checkAllChanges() {
   changesLoading.value = true
   changesData.value = null
   try {
-    const response = await fetch(`/api/check-all-changes/${folderName.value}?max=100`)
-    const data = await response.json()
+    const data = await fetchJson(`/api/check-all-changes/${folderName.value}?max=100`)
     changesData.value = data
   } catch (err) {
     showError('Ошибка проверки: ' + err.message)
@@ -2338,12 +2551,11 @@ function updateAllChanged() {
     const paths = changedPages.map(p => p.page)
     
     try {
-      const response = await fetch(`/api/download-missing/${folderName.value}`, {
+      const data = await fetchJson(`/api/download-missing/${folderName.value}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paths })
       })
-      const data = await response.json()
       showSuccess(`Обновлено: ${data.downloaded} / ${data.total}${data.failed > 0 ? ', ошибок: ' + data.failed : ''}`)
       await checkAllChanges()
     } catch (err) {
@@ -2356,12 +2568,11 @@ function updateAllChanged() {
 
 async function updateSinglePage(page) {
   try {
-    const response = await fetch(`/api/download-missing/${folderName.value}`, {
+    const data = await fetchJson(`/api/download-missing/${folderName.value}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paths: [page.page] })
     })
-    const data = await response.json()
     if (data.downloaded > 0) {
       // Update status in local data
       page.status = 'unchanged'
@@ -2379,8 +2590,7 @@ async function updateSinglePage(page) {
 async function generateThumbnail() {
   generatingThumb.value = true
   try {
-    const response = await fetch(`/api/screenshot/${folderName.value}`, { method: 'POST' })
-    const data = await response.json()
+    const data = await fetchJson(`/api/screenshot/${folderName.value}`, { method: 'POST' })
     if (data.path) {
       thumbnailUrl.value = `/api/thumbnail/${folderName.value}?t=${Date.now()}`
       thumbnailError.value = false
@@ -2404,14 +2614,13 @@ async function confirmRedownload() {
   showEngineModal.value = false
   
   try {
-    const response = await fetch(`/api/downloads/${folderName.value}/restart`, {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/restart`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         engine: selectedEngine.value
       })
     })
-    const data = await response.json()
     if (data.id) {
       activeJob.value = { id: data.id, progress: 0 }
       pollJobProgress(data.id)
@@ -2430,12 +2639,7 @@ function pollJobProgress(jobId) {
   
   pollInterval = setInterval(async () => {
     try {
-      const response = await fetch(`/api/jobs/${jobId}`)
-      if (!response.ok) {
-        console.error('Job not found:', jobId)
-        return
-      }
-      const data = await response.json()
+      const data = await fetchJson(`/api/jobs/${jobId}`)
       
       activeJob.value = {
         id: jobId,
@@ -2508,8 +2712,7 @@ function getLogLineClass(line) {
 async function showHistoryLogs() {
   // Загружаем логи последней задачи для этого сайта
   try {
-    const response = await fetch('/api/jobs')
-    const jobs = await response.json()
+    const jobs = await fetchJson('/api/jobs')
     
     // Ищем последнюю задачу для этого сайта
     const siteJobs = jobs.filter(j => 
@@ -2533,7 +2736,7 @@ function stopRedownload() {
   if (!activeJob.value?.id) return
   showConfirm('Остановить?', 'Остановить перекачивание?', async () => {
     try {
-      await fetch(`/api/jobs/${activeJob.value.id}/stop`, { method: 'POST' })
+      await fetchApi(`/api/jobs/${activeJob.value.id}/stop`, { method: 'POST' })
       if (pollInterval) {
         clearInterval(pollInterval)
         pollInterval = null
@@ -2607,8 +2810,7 @@ async function checkFolderChanges(folderNode) {
   
   for (const file of htmlFiles) {
     try {
-      const response = await fetch(`/api/check-changes/${folderName.value}?page=${encodeURIComponent(file.path)}`)
-      const result = await response.json()
+      const result = await fetchJson(`/api/check-changes/${folderName.value}?page=${encodeURIComponent(file.path)}`)
       if (result.error) errors++
       else if (result.has_changes) changed++
       else upToDate++
@@ -2640,12 +2842,11 @@ async function redownloadFolder(folderNode) {
   showConfirm('Перескачать папку?', `Перескачать ${htmlFiles.length} HTML файлов из "${folderNode.name}"?`, async () => {
     const paths = htmlFiles.map(f => f.path)
     try {
-      const response = await fetch(`/api/download-missing/${folderName.value}`, {
+      const data = await fetchJson(`/api/download-missing/${folderName.value}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paths })
       })
-      const data = await response.json()
       showSuccess(`Перескачано: ${data.downloaded} / ${data.total}${data.failed > 0 ? ', ошибок: ' + data.failed : ''}`)
       if (data.downloaded > 0) loadFileTree()
     } catch (err) {
@@ -2659,8 +2860,7 @@ async function checkIntegrity() {
   integrityResult.value = null
   downloadResult.value = null
   try {
-    const response = await fetch(`/api/check-integrity/${folderName.value}`)
-    const data = await response.json()
+    const data = await fetchJson(`/api/check-integrity/${folderName.value}`)
     integrityResult.value = data
   } catch (err) {
     showError('Ошибка проверки целостности: ' + err.message)
@@ -2677,12 +2877,11 @@ function downloadAllMissing() {
     downloadingMissing.value = true
     downloadResult.value = null
     try {
-      const response = await fetch(`/api/download-missing/${folderName.value}`, {
+      const data = await fetchJson(`/api/download-missing/${folderName.value}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paths })
       })
-      const data = await response.json()
       downloadResult.value = data
       if (data.downloaded > 0) {
         loadFileTree()
@@ -2697,12 +2896,11 @@ function downloadAllMissing() {
 
 async function downloadSingleMissing(path) {
   try {
-    const response = await fetch(`/api/download-missing/${folderName.value}`, {
+    const data = await fetchJson(`/api/download-missing/${folderName.value}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paths: [path] })
     })
-    const data = await response.json()
     if (data.downloaded > 0) {
       showSuccess(`Скачан: ${path}`)
       // Remove from missing list
@@ -2840,23 +3038,17 @@ async function startScan() {
   scanPagesScanned.value = 0
   
   try {
-    const res = await fetch('/api/scan-async', {
+    const data = await fetchJson('/api/scan-async', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         url: landingMeta.value?.url || `https://${siteData.value.domain}`,
         folder_name: folderName.value,
-        max_pages: 30
+        max_pages: config.defaultScanMaxPages
       })
     })
-    
-    const data = await res.json()
-    if (res.ok) {
-      scanId.value = data.scan_id
-      pollScanProgress()
-    } else {
-      showError('Ошибка запуска анализа: ' + data.error)
-    }
+    scanId.value = data.scan_id
+    pollScanProgress()
   } catch (err) {
     showError(err.message)
   }
@@ -2867,8 +3059,7 @@ async function pollScanProgress() {
   if (scanStatus.value === 'completed' && wizardStep.value === 2) return
   
   try {
-    const res = await fetch(`/api/scan-status/${scanId.value}`)
-    const data = await res.json()
+    const data = await fetchJson(`/api/scan-status/${scanId.value}`)
     
     scanProgress.value = data.progress || 0
     scanPagesScanned.value = data.pages_scanned || 0
@@ -2990,7 +3181,7 @@ async function startSelectedDownload() {
   wizardStep.value = 3
   
   try {
-    const res = await fetch('/api/start-download-selected', {
+    const data = await fetchJson('/api/start-download-selected', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3004,9 +3195,7 @@ async function startSelectedDownload() {
         }
       })
     })
-    
-    const data = await res.json()
-    if (res.ok && (data.id || data.job_id)) {
+    if (data.id || data.job_id) {
       const jobId = data.id || data.job_id
       activeJob.value = { id: jobId, progress: 0, status: 'running' }
       
@@ -3027,10 +3216,7 @@ async function startSelectedDownload() {
 
 async function loadScriptsStatus() {
   try {
-    const response = await fetch(`/api/downloads/${folderName.value}/scripts-status`)
-    if (response.ok) {
-      scriptsStatus.value = await response.json()
-    }
+    scriptsStatus.value = await fetchJson(`/api/downloads/${folderName.value}/scripts-status`)
   } catch (err) {
     console.error('Ошибка загрузки статуса скриптов:', err)
   }
@@ -3046,7 +3232,7 @@ async function confirmGenerateScripts() {
   generatingScripts.value = true
   
   try {
-    const response = await fetch(`/api/downloads/${folderName.value}/generate-scripts`, {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/generate-scripts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3056,7 +3242,6 @@ async function confirmGenerateScripts() {
         move_to_site: scriptsOptions.value.moveToSite
       })
     })
-    const data = await response.json()
     
     if (data.success) {
       showSuccess('Скрипты созданы!')
@@ -3073,14 +3258,15 @@ async function confirmGenerateScripts() {
 
 function openInBrowser() {
   // Открываем попап выбора платформы
+  serverLaunchSteps.value = []
+  serverLaunchError.value = null
   showOpenModal.value = true
 }
 
 async function openStaticHtml() {
   showOpenModal.value = false
   try {
-    const response = await fetch(`/api/find-index/${folderName.value}`)
-    const data = await response.json()
+    const data = await fetchJson(`/api/find-index/${folderName.value}`)
     
     if (data.index_path) {
       window.open(`/api/browse/${folderName.value}/${data.index_path}`, '_blank')
@@ -3092,28 +3278,187 @@ async function openStaticHtml() {
   }
 }
 
+function stepLabel(name) {
+  const labels = {
+    'scripts_status': 'Статус',
+    'vue-app': 'Vue App',
+    'package.json': 'package.json',
+    'backend-server.js': 'Backend JS',
+    'ports': 'Порты',
+    'servers_check': 'Серверы',
+    'backend_check': 'Backend',
+    'stop_servers': 'Остановка',
+    'already_running': 'Уже запущен',
+    'sync_templates': 'Шаблоны',
+    'npm_install': 'npm install',
+    'port_cleanup': 'Порт Backend',
+    'port_cleanup_vue': 'Порт Vue',
+    'backend_start': 'Backend',
+    'vue_start': 'Vue Vite',
+    'verify': 'Проверка',
+  }
+  return labels[name] || name
+}
+
+function copyLaunchLogs() {
+  const statusIcons = { ok: '[OK]', error: '[ERR]', warn: '[WARN]', running: '[...]', skip: '[SKIP]' }
+  const lines = serverLaunchSteps.value.map(s => {
+    const icon = statusIcons[s.status] || '[?]'
+    return `${icon} ${stepLabel(s.name)}${s.detail ? ' - ' + s.detail : ''}`
+  })
+  if (serverLaunchError.value) {
+    lines.push(`\n[ERROR] ${serverLaunchError.value}`)
+  }
+  const text = `WCLoner Launch Log\n${'='.repeat(40)}\n${lines.join('\n')}`
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('Логи скопированы', 'success', 2000)
+  }).catch(() => {
+    showToast('Не удалось скопировать', 'error', 2000)
+  })
+}
+
+function addStep(name, status, detail = '') {
+  serverLaunchSteps.value = [...serverLaunchSteps.value, { name, status, detail }]
+}
+
+function updateLastStep(status, detail) {
+  const steps = [...serverLaunchSteps.value]
+  if (steps.length > 0) {
+    steps[steps.length - 1] = { ...steps[steps.length - 1], status, detail }
+    serverLaunchSteps.value = steps
+  }
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 async function openVueWrapper() {
-  // НЕ закрываем попап - показываем прогресс
+  // Показываем прогресс запуска/проверки
   startingServer.value = 'vue'
+  serverLaunchSteps.value = []
+  serverLaunchError.value = null
   
+  // --- Шаг 1: Загрузка статуса скриптов ---
+  addStep('scripts_status', 'running', 'Загрузка статуса...')
+  await wait(200)
   try {
-    const response = await fetch(`/api/downloads/${folderName.value}/start-vue`, { method: 'POST' })
-    const data = await response.json()
+    scriptsStatus.value = await fetchJson(`/api/downloads/${folderName.value}/scripts-status`)
+    updateLastStep('ok', 'Статус получен')
+  } catch (e) {
+    updateLastStep('error', 'Не удалось получить статус: ' + e.message)
+    serverLaunchError.value = 'Не удалось получить статус скриптов'
+    startingServer.value = null
+    return
+  }
+  await wait(150)
+  
+  // --- Шаг 2: Проверка vue-app ---
+  addStep('vue-app', 'running', 'Проверка vue-app...')
+  await wait(200)
+  const hasVue = scriptsStatus.value?.vue_wrapper?.ready
+  if (!hasVue) {
+    updateLastStep('error', 'Vue обертка не найдена')
+    serverLaunchError.value = 'Сначала сгенерируйте скрипты'
+    startingServer.value = null
+    return
+  }
+  updateLastStep('ok', 'Vue обертка готова')
+  await wait(150)
+  
+  // --- Шаг 3: Проверка backend-server.js ---
+  addStep('backend-server.js', 'running', 'Проверка backend-server.js...')
+  await wait(200)
+  const hasBackend = scriptsStatus.value?.backend_server?.ready
+  updateLastStep(hasBackend ? 'ok' : 'warn', hasBackend ? 'Файл найден' : 'Не найден, будет создан')
+  await wait(150)
+  
+  // --- Шаг 4: Проверка серверов ---
+  addStep('servers_check', 'running', 'Проверка запущенных серверов...')
+  await wait(200)
+  try {
+    const srvStatus = await fetchJson(`/api/downloads/${folderName.value}/servers-status`)
+    const vueRunning = srvStatus?.vue_server?.running
+    const backendRunning = srvStatus?.backend_server?.running
+    if (vueRunning) {
+      updateLastStep('ok', `Vue уже запущен на :${srvStatus.vue_server.port}`)
+      runningServers.value.vue = { port: srvStatus.vue_server.port, pid: srvStatus.vue_server.pid, url: srvStatus.vue_server.url || `http://localhost:${srvStatus.vue_server.port}` }
+      if (backendRunning) {
+        addStep('backend_check', 'ok', `Backend на :${srvStatus.backend_server.port}`)
+        runningServers.value.backend = { port: srvStatus.backend_server.port, pid: srvStatus.backend_server.pid }
+      }
+      addStep('verify', 'ok', `http://localhost:${srvStatus.vue_server.port} - серверы работают`)
+      // Серверы уже работают - не запускаем повторно, покажем кнопки
+      startingServer.value = null
+      return
+    } else {
+      updateLastStep('ok', 'Серверы не запущены, будут запущены')
+    }
+  } catch (e) {
+    updateLastStep('warn', 'Не удалось проверить: ' + e.message)
+  }
+  await wait(150)
+  
+  // --- Шаги 5-8: Предварительные плейсхолдеры ---
+  addStep('sync_templates', 'running', 'Синхронизация шаблонов...')
+  addStep('npm_install', 'running', 'Проверка зависимостей...')
+  addStep('backend_start', 'running', 'Запуск Backend сервера...')
+  addStep('vue_start', 'running', 'Запуск Vue Vite...')
+  addStep('verify', 'running', 'Ожидание...')
+  
+  // --- Вызов API ---
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/start-vue`, { method: 'POST' })
+    
+    // Заменяем предварительные шаги реальными от сервера
+    if (data.steps && data.steps.length > 0) {
+      serverLaunchSteps.value = data.steps
+    }
     
     if (data.status === 'started' || data.status === 'already_running') {
       runningServers.value.vue = { port: data.vue_port, pid: data.vue_pid, url: data.url }
-      showOpenModal.value = false
-      window.open(data.url, '_blank')
-    } else if (data.error) {
-      showError('Ошибка запуска Vue: ' + data.error)
+      if (data.backend_port) {
+        runningServers.value.backend = { port: data.backend_port, pid: data.backend_pid }
+      }
+      // Не открываем автоматически - пользователь нажмёт "Открыть сайт"
     } else {
-      showError('Ошибка запуска Vue: Неизвестная ошибка')
+      serverLaunchError.value = data.error || 'Неизвестная ошибка'
     }
   } catch (err) {
-    showError(err.message)
+    serverLaunchError.value = err.message
   } finally {
     startingServer.value = null
   }
+}
+
+function openVueSite() {
+  const url = runningServers.value.vue?.url || `http://localhost:${runningServers.value.vue?.port}`
+  showOpenModal.value = false
+  window.open(url, '_blank')
+}
+
+async function restartAndRecheck() {
+  startingServer.value = 'restarting'
+  serverLaunchSteps.value = []
+  serverLaunchError.value = null
+  
+  addStep('stop_servers', 'running', 'Остановка серверов...')
+  try {
+    await fetchApi(`/api/downloads/${folderName.value}/stop-vue`, { method: 'POST' })
+    await fetchApi(`/api/downloads/${folderName.value}/stop-servers`, { method: 'POST' })
+    updateLastStep('ok', 'Серверы остановлены')
+  } catch (e) {
+    updateLastStep('warn', 'Ошибка остановки: ' + e.message)
+  }
+  await wait(500)
+  
+  // Сбрасываем runningServers
+  runningServers.value.vue = null
+  runningServers.value.backend = null
+  startingServer.value = null
+  
+  // Запускаем полный цикл проверки и запуска
+  await openVueWrapper()
 }
 
 async function restartVueServer() {
@@ -3121,21 +3466,19 @@ async function restartVueServer() {
   
   try {
     // Останавливаем текущий сервер
-    await fetch(`/api/downloads/${folderName.value}/stop-vue`, { method: 'POST' })
+    await fetchApi(`/api/downloads/${folderName.value}/stop-vue`, { method: 'POST' })
     
     // Небольшая пауза
     await new Promise(resolve => setTimeout(resolve, 500))
     
     // Запускаем заново
-    const response = await fetch(`/api/downloads/${folderName.value}/start-vue`, { method: 'POST' })
-    const data = await response.json()
+    const data = await fetchJson(`/api/downloads/${folderName.value}/start-vue`, { method: 'POST' })
     
     if (data.status === 'started' || data.status === 'already_running') {
       runningServers.value.vue = { port: data.vue_port, pid: data.vue_pid, url: data.url }
       showToast('Vue сервер перезапущен', 'success')
-      window.open(data.url, '_blank')
-    } else if (data.error) {
-      showError('Ошибка перезапуска: ' + data.error)
+    } else {
+      showError('Ошибка перезапуска: ' + (data.error || 'Неизвестная ошибка'))
     }
   } catch (err) {
     showError(err.message)
@@ -3149,17 +3492,14 @@ async function openBackendServer() {
   startingServer.value = 'backend'
   
   try {
-    const response = await fetch(`/api/downloads/${folderName.value}/start-backend`, { method: 'POST' })
-    const data = await response.json()
+    const data = await fetchJson(`/api/downloads/${folderName.value}/start-backend`, { method: 'POST' })
     
     if (data.status === 'started' || data.status === 'already_running') {
       runningServers.value.backend = { port: data.port, pid: data.pid, url: data.url }
       showOpenModal.value = false
       window.open(data.url, '_blank')
-    } else if (data.error) {
-      showError('Ошибка запуска Backend: ' + data.error)
     } else {
-      showError('Ошибка запуска Backend: Неизвестная ошибка')
+      showError('Ошибка запуска Backend: ' + (data.error || 'Неизвестная ошибка'))
     }
   } catch (err) {
     showError(err.message)
@@ -3170,13 +3510,10 @@ async function openBackendServer() {
 
 async function loadServersStatus() {
   try {
-    const response = await fetch(`/api/downloads/${folderName.value}/servers-status`)
-    if (response.ok) {
-      const data = await response.json()
-      runningServers.value = {
-        vue: data.vue || false,
-        backend: data.backend || false
-      }
+    const data = await fetchJson(`/api/downloads/${folderName.value}/servers-status`)
+    runningServers.value = {
+      vue: data.vue_server?.running ? data.vue_server : false,
+      backend: data.backend_server?.running ? data.backend_server : false
     }
   } catch (err) {
     console.error('Error loading servers status:', err)
@@ -3185,7 +3522,7 @@ async function loadServersStatus() {
 
 async function stopAllServers() {
   try {
-    await fetch(`/api/downloads/${folderName.value}/stop-servers`, { method: 'POST' })
+    await fetchApi(`/api/downloads/${folderName.value}/stop-servers`, { method: 'POST' })
     runningServers.value = { vue: false, backend: false }
   } catch (err) {
     console.error('Error stopping servers:', err)
@@ -3193,8 +3530,8 @@ async function stopAllServers() {
 }
 
 function openFolder() {
-  fetch(`/api/open-folder?path=${encodeURIComponent(siteData.value.path)}`)
-    .catch(err => console.error('Ошибка открытия папки:', err))
+  fetchApi(`/api/open-folder?path=${encodeURIComponent(siteData.value.path)}`)
+    .catch(err => showError('Ошибка открытия папки: ' + err.message))
 }
 
 function openSubdomain(subdomain) {
@@ -3206,14 +3543,14 @@ function openSubdomain(subdomain) {
 
 function openSubdomainFolder(subdomain) {
   const subPath = siteData.value.path + '/' + subdomain.name
-  fetch(`/api/open-folder?path=${encodeURIComponent(subPath)}`)
-    .catch(err => console.error('Ошибка открытия папки поддомена:', err))
+  fetchApi(`/api/open-folder?path=${encodeURIComponent(subPath)}`)
+    .catch(err => showError('Ошибка открытия папки поддомена: ' + err.message))
 }
 
 async function downloadSubdomain(subdomain) {
   const url = `https://${subdomain.name}`
   try {
-    const response = await fetch('/api/landings/redownload', {
+    const data = await fetchJson('/api/landings/redownload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3222,7 +3559,6 @@ async function downloadSubdomain(subdomain) {
         config_key: subdomain.config_key
       })
     })
-    const data = await response.json()
     if (data.id) {
       showSuccess(`Скачивание запущено! URL: ${url}`)
     } else {
@@ -3237,7 +3573,7 @@ function redownloadSubdomain(subdomain) {
   showConfirm('Перескачать поддомен?', `Перескачать поддомен "${subdomain.name}"?\n\nЭто обновит все файлы.`, async () => {
     const url = `https://${subdomain.name}`
     try {
-      const response = await fetch('/api/landings/redownload', {
+      const data = await fetchJson('/api/landings/redownload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3246,7 +3582,6 @@ function redownloadSubdomain(subdomain) {
           config_key: subdomain.config_key
         })
       })
-      const data = await response.json()
       if (data.id) {
         showSuccess(`Перескачивание запущено! URL: ${url}`)
       } else {
@@ -3266,8 +3601,7 @@ async function checkPageChanges(page) {
   }
   
   try {
-    const response = await fetch(`/api/check-changes/${folderName.value}?page=${encodeURIComponent(page.path)}`)
-    const result = await response.json()
+    const result = await fetchJson(`/api/check-changes/${folderName.value}?page=${encodeURIComponent(page.path)}`)
     
     let message = `Проверка: ${page.name}\n`
     message += `Путь: ${page.path}\n\n`
@@ -3298,8 +3632,7 @@ async function checkPageChanges(page) {
 
 async function checkSubdomainChanges(subdomain) {
   try {
-    const response = await fetch(`/api/check-changes/${folderName.value}?subdomain=${encodeURIComponent(subdomain.name)}`)
-    const result = await response.json()
+    const result = await fetchJson(`/api/check-changes/${folderName.value}?subdomain=${encodeURIComponent(subdomain.name)}`)
     
     let message = `Проверка изменений: ${subdomain.name}\n\n`
     
@@ -3327,7 +3660,7 @@ async function checkSubdomainChanges(subdomain) {
 async function setSubdomainTag(subdomain, tagId) {
   try {
     const newConfig = { ...subdomain.config, tag: tagId }
-    const response = await fetch('/api/landings/config', {
+    await fetchApi('/api/landings/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3336,12 +3669,10 @@ async function setSubdomainTag(subdomain, tagId) {
       })
     })
     
-    if (response.ok) {
-      const sub = siteData.value.subdomains.find(s => s.name === subdomain.name)
-      if (sub) {
-        if (!sub.config) sub.config = {}
-        sub.config.tag = tagId
-      }
+    const sub = siteData.value.subdomains.find(s => s.name === subdomain.name)
+    if (sub) {
+      if (!sub.config) sub.config = {}
+      sub.config.tag = tagId
     }
   } catch (err) {
     console.error('Ошибка сохранения тега:', err)
@@ -3352,7 +3683,7 @@ async function toggleSubdomainExclude(subdomain) {
   const newExcluded = !subdomain.excluded
   
   try {
-    const response = await fetch('/api/landings/config', {
+    await fetchApi('/api/landings/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3361,13 +3692,11 @@ async function toggleSubdomainExclude(subdomain) {
       })
     })
     
-    if (response.ok) {
-      // Обновляем данные в siteData напрямую
-      const sub = siteData.value.subdomains.find(s => s.name === subdomain.name)
-      if (sub) {
-        if (!sub.config) sub.config = {}
-        sub.config.excluded = newExcluded
-      }
+    // Обновляем данные в siteData напрямую
+    const sub = siteData.value.subdomains.find(s => s.name === subdomain.name)
+    if (sub) {
+      if (!sub.config) sub.config = {}
+      sub.config.excluded = newExcluded
     }
   } catch (err) {
     console.error('Ошибка сохранения метки:', err)
@@ -3428,14 +3757,17 @@ function deleteSite() {
 
 async function checkActiveJobs() {
   try {
-    const response = await fetch('/api/jobs')
-    const jobs = await response.json()
+    const jobs = await fetchJson('/api/jobs')
     
-    // Find running job for this folder
-    const runningJob = jobs.find(j => 
-      j.status === 'running' && 
-      j.output_dir?.includes(folderName.value)
-    )
+    // Find jobs for this folder, sorted by date descending (newest first)
+    const folderJobs = jobs
+      .filter(j => j.output_dir?.includes(folderName.value))
+      .sort((a, b) => new Date(b.started_at || 0) - new Date(a.started_at || 0))
+    
+    if (!folderJobs.length) return
+    
+    // Show progress block ONLY for currently running jobs
+    const runningJob = folderJobs.find(j => j.status === 'running')
     
     if (runningJob) {
       activeJob.value = {
@@ -3443,7 +3775,8 @@ async function checkActiveJobs() {
         progress: runningJob.progress || 0,
         files: runningJob.files_downloaded || 0,
         size: runningJob.total_size || '0 B',
-        status: runningJob.status
+        status: runningJob.status,
+        logs: runningJob.output_lines || []
       }
       pollJobProgress(runningJob.id)
     }
