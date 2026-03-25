@@ -9,7 +9,7 @@
             </div>
             <h1 class="text-xl font-bold">Black Rabbit Cloner</h1>
           </div>
-          <div class="flex space-x-4">
+          <div class="flex items-center space-x-2">
             <router-link 
               to="/landings" 
               class="px-4 py-2 rounded-lg hover:bg-white/10 transition-colors"
@@ -24,6 +24,7 @@
             >
               <i class="fas fa-download mr-2"></i>Скачать
             </router-link>
+            <GlobalDownloadManager />
           </div>
         </div>
       </div>
@@ -38,6 +39,7 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useJobsStore } from './stores/jobs'
+import GlobalDownloadManager from './components/GlobalDownloadManager.vue'
 
 const jobsStore = useJobsStore()
 

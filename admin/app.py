@@ -44,6 +44,16 @@ from modules.server_manager import (
     get_servers_status, start_vue_server, start_backend_server, stop_servers, stop_vue_server,
     kill_registered_servers
 )
+from modules.links_analyzer import (
+    get_links_analysis, run_deep_analysis
+)
+from modules.dynamic_downloader import (
+    scan_page_for_missing, scan_multiple_pages, quick_scan_missing_resources
+)
+from modules.page_checker import (
+    check_local_links, check_pages_online, check_all_internal_links,
+    download_working_pages, fix_broken_links, get_page_check_summary
+)
 
 # FastAPI app
 app = FastAPI(title="Wget Web Admin", version="2.0")
@@ -498,6 +508,252 @@ async def get_scan_status_endpoint(scan_id):
 
 
 # =============================================================================
+# API ENDPOINTS - Links Analysis
+# =============================================================================
+
+@app.get('/api/downloads/{folder_name}/links-analysis')
+async def get_links_analysis_endpoint(folder_name):
+    """Получить анализ ссылок для папки (из кэша или локальный анализ)"""
+    result = get_links_analysis(folder_name)
+    if 'error' in result:
+        raise HTTPException(status_code=404, detail=result)
+    return result
+
+
+@app.post('/api/downloads/{folder_name}/analyze-links')
+async def analyze_links_endpoint(folder_name, request: Request):
+    """Запустить глубокий онлайн анализ ссылок"""
+    data = await request.json() if request else {}
+    url = data.get('url')
+    max_pages = data.get('max_pages', 50)
+    
+    result = run_deep_analysis(folder_name, url, max_pages)
+    if 'error' in result:
+        raise HTTPException(status_code=404, detail=result)
+    return result
+
+
+@app.post('/api/downloads/{folder_name}/download-page')
+async def download_single_page_endpoint(folder_name, request: Request):
+    """Скачать конкретную страницу по URL"""
+    import requests as http_requests
+    
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    data = await request.json()
+    url = data.get('url', '').strip()
+    force = data.get('force', False)
+    
+    if not url:
+        raise HTTPException(status_code=400, detail={'error': 'URL is required'})
+    
+    # Parse URL to get domain and path
+    parsed = urlparse(url)
+    domain = parsed.netloc
+    path = parsed.path.lstrip('/') or 'index.html'
+    
+    # Add index.html if path is directory
+    if path.endswith('/') or '.' not in path.split('/')[-1]:
+        path = path.rstrip('/') + '/index.html'
+    
+    local_file = folder_path / domain / path
+    
+    # Check if exists
+    if local_file.exists() and not force:
+        return {'status': 'skipped', 'reason': 'File already exists', 'path': str(local_file.relative_to(folder_path))}
+    
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
+        response = http_requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+        
+        if response.status_code == 200:
+            local_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(local_file, 'wb') as f:
+                f.write(response.content)
+            
+            return {
+                'status': 'downloaded',
+                'path': str(local_file.relative_to(folder_path)),
+                'size': len(response.content),
+                'url': url
+            }
+        else:
+            return {'status': 'failed', 'error': f'HTTP {response.status_code}', 'url': url}
+    
+    except Exception as e:
+        return {'status': 'error', 'error': str(e), 'url': url}
+
+
+# =============================================================================
+# API ENDPOINTS - Dynamic Content Download (Puppeteer)
+# =============================================================================
+
+@app.post('/api/downloads/{folder_name}/scan-dynamic')
+async def scan_dynamic_content(folder_name, request: Request):
+    """
+    Сканирует страницу через Puppeteer и докачивает динамически загружаемые ресурсы.
+    Полезно для сайтов с lazy loading, JS-генерируемым контентом.
+    """
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    data = await request.json() if request else {}
+    url = data.get('url', '').strip()
+    timeout = data.get('timeout', 30)
+    
+    if not url:
+        # Используем URL из метаданных
+        meta_path = folder_path / '_wcloner' / 'landing.json'
+        if meta_path.exists():
+            with open(meta_path, 'r') as f:
+                meta = json.load(f)
+            url = meta.get('url', f'https://{folder_name}')
+        else:
+            url = f'https://{folder_name}'
+    
+    result = scan_page_for_missing(url, folder_path, timeout)
+    return result
+
+
+@app.post('/api/downloads/{folder_name}/scan-dynamic-multiple')
+async def scan_dynamic_multiple(folder_name, request: Request):
+    """
+    Сканирует несколько страниц через Puppeteer и докачивает ресурсы.
+    """
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    data = await request.json()
+    urls = data.get('urls', [])
+    timeout = data.get('timeout', 30)
+    
+    if not urls:
+        raise HTTPException(status_code=400, detail={'error': 'URLs list is required'})
+    
+    result = scan_multiple_pages(urls, folder_path, timeout)
+    return result
+
+
+@app.get('/api/downloads/{folder_name}/quick-scan-missing')
+async def quick_scan_missing(folder_name):
+    """
+    Быстрое сканирование HTML на предмет недостающих ресурсов (без Puppeteer).
+    Парсит HTML и проверяет существование файлов локально.
+    """
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    result = quick_scan_missing_resources(folder_path)
+    return result
+
+
+# =============================================================================
+# API ENDPOINTS - Page Checker (404 Analysis)
+# =============================================================================
+
+@app.get('/api/downloads/{folder_name}/check-local-links')
+async def check_local_links_endpoint(folder_name):
+    """
+    Проверяет локальные ссылки в HTML файлах.
+    Находит битые ссылки (файлы которых нет локально).
+    """
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    result = check_local_links(folder_path)
+    return result
+
+
+@app.post('/api/downloads/{folder_name}/check-pages-online')
+async def check_pages_online_endpoint(folder_name, request: Request):
+    """
+    Проверяет список URL онлайн на 404 и другие ошибки.
+    Анализирует причины ошибок и предлагает решения.
+    """
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    data = await request.json()
+    urls = data.get('urls', [])
+    
+    if not urls:
+        raise HTTPException(status_code=400, detail={'error': 'URLs list is required'})
+    
+    result = check_pages_online(urls, folder_path)
+    return result
+
+
+@app.post('/api/downloads/{folder_name}/check-all-internal')
+async def check_all_internal_endpoint(folder_name, request: Request):
+    """
+    Полная проверка: находит все внутренние ссылки и проверяет их онлайн.
+    """
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    data = await request.json() if request else {}
+    base_url = data.get('url')
+    max_pages = data.get('max_pages', 50)
+    
+    result = check_all_internal_links(folder_path, base_url, max_pages)
+    return result
+
+
+@app.post('/api/downloads/{folder_name}/download-working-pages')
+async def download_working_pages_endpoint(folder_name, request: Request):
+    """
+    Докачивает страницы которые работают онлайн но отсутствуют локально.
+    """
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    data = await request.json()
+    check_results = data.get('check_results', {})
+    max_download = data.get('max_download', 20)
+    
+    result = download_working_pages(folder_path, check_results, max_download)
+    return result
+
+
+@app.post('/api/downloads/{folder_name}/fix-broken-links')
+async def fix_broken_links_endpoint(folder_name, request: Request):
+    """
+    Пытается исправить битые ссылки (скачать по редиректам).
+    """
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    data = await request.json()
+    check_results = data.get('check_results', {})
+    
+    result = fix_broken_links(folder_path, check_results)
+    return result
+
+
+@app.get('/api/downloads/{folder_name}/page-check-summary')
+async def page_check_summary_endpoint(folder_name):
+    """
+    Возвращает краткую сводку по проверке страниц.
+    """
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    result = get_page_check_summary(folder_path)
+    return result
+
+
+# =============================================================================
 # API ENDPOINTS - Landing Preparation
 # =============================================================================
 
@@ -638,18 +894,31 @@ async def check_integrity_endpoint(folder_name):
 
 
 @app.post('/api/download-missing/{folder_name}')
-async def download_missing_endpoint(folder_name):
+async def download_missing_endpoint(folder_name, request: Request):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
     
-    # Get integrity check first
-    integrity = check_site_integrity(folder_path)
-    missing = [m['missing'] for m in integrity.get('missing_files', [])]
+    # Parse request body
+    data = {}
+    try:
+        data = await request.json()
+    except:
+        pass
     
-    if not missing:
-        return {'message': 'No missing files', 'downloaded': 0}
+    # Get paths from request or use integrity check
+    paths = data.get('paths', [])
+    force = data.get('force', False)
     
+    if not paths:
+        # Fallback to integrity check
+        integrity = check_site_integrity(folder_path)
+        paths = [m['missing'] for m in integrity.get('missing_files', [])]
+    
+    if not paths:
+        return {'message': 'No files to download', 'downloaded': 0}
+    
+    # Get base URL from metadata
     meta_path = folder_path / '_wcloner' / 'landing.json'
     if meta_path.exists():
         with open(meta_path, 'r') as f:
@@ -658,7 +927,7 @@ async def download_missing_endpoint(folder_name):
     else:
         base_url = f'https://{folder_name}'
     
-    result = download_missing_files(folder_path, base_url, missing[:50])
+    result = download_missing_files(folder_path, base_url, paths[:50], force=force)
     return result
 
 
@@ -733,6 +1002,66 @@ async def fix_html_scan_endpoint(folder_name):
     
     from modules.html_fixer import fix_wget_corrupted_html
     return fix_wget_corrupted_html(folder_path, dry_run=True)
+
+
+@app.get('/api/downloads/{folder_name}/broken-links')
+async def get_broken_links(folder_name):
+    """Получить список битых ссылок и анализ возможности исправления."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    # Сначала проверяем локальные ссылки
+    broken = check_local_links(folder_path, max_pages=200)
+    
+    # Анализируем возможность исправления
+    from modules.link_fixer import analyze_broken_links
+    analysis = analyze_broken_links(folder_path, broken.get('broken_links', []))
+    
+    return {
+        'check_result': broken,
+        'analysis': analysis
+    }
+
+
+@app.post('/api/downloads/{folder_name}/fix-broken-links')
+async def fix_broken_links_endpoint(folder_name, request: Request):
+    """Исправить битые ссылки (локальные или скачать недостающие)."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    body = await request.json()
+    action = body.get('action', 'auto')  # auto, fix_local, download
+    links_to_fix = body.get('links', [])
+    
+    from modules.link_fixer import auto_fix_local_links, fix_broken_links as fix_links
+    
+    if action == 'auto':
+        # Автоматически исправляем все что можно локально
+        broken = check_local_links(folder_path, max_pages=200)
+        result = auto_fix_local_links(folder_path, broken.get('broken_links', []))
+        return result
+    elif action == 'fix_local':
+        # Исправляем только указанные ссылки
+        result = fix_links(folder_path, links_to_fix)
+        return result
+    elif action == 'download':
+        # Скачиваем недостающие файлы
+        downloaded = []
+        failed = []
+        for link_info in links_to_fix:
+            link = link_info.get('link', '')
+            if link.startswith(('http://', 'https://')):
+                from modules.page_checker import download_single_page
+                result = download_single_page(link, folder_path)
+                if result.get('success'):
+                    downloaded.append({**link_info, 'path': result.get('path')})
+                else:
+                    failed.append({**link_info, 'error': result.get('error')})
+        return {'downloaded': downloaded, 'failed': failed}
+    else:
+        raise HTTPException(status_code=400, detail={'error': 'Invalid action'})
 
 
 @app.get('/api/downloads/{folder_name}/scripts-status')

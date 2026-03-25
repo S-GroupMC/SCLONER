@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse, urljoin
 
 from .config import DOWNLOADS_DIR, active_scans
+from .constants import DEFAULT_HEADERS, DEFAULT_TIMEOUT
 
 
 def check_site_changes(folder_path, url):
@@ -39,11 +40,7 @@ def check_site_changes(folder_path, url):
             with open(hashes_file, 'w') as f:
                 json.dump(saved_hashes, f, indent=2)
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
         
         if response.status_code != 200:
             return {

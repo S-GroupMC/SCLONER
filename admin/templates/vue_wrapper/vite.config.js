@@ -100,6 +100,25 @@ function findFile(urlPath) {
     if (fs.existsSync(check) && fs.statSync(check).isFile()) return check
   }
 
+  // Strategy 6: Try assets/cache_image/ fallback for missing images
+  // wget sometimes saves images to cache_image instead of original path
+  if (mainDomain && normalized.includes('/image/')) {
+    const cachePath = normalized.replace('/image/', '/assets/cache_image/image/')
+    check = path.join(PROJECT_DIR, mainDomain, cachePath)
+    if (fs.existsSync(check) && fs.statSync(check).isFile()) return check
+    
+    // Try finding similar file in cache directory (with different suffix)
+    const dir = path.dirname(path.join(PROJECT_DIR, mainDomain, cachePath))
+    const baseName = path.basename(normalized).replace(/\.[^.]+$/, '')
+    if (fs.existsSync(dir)) {
+      try {
+        const files = fs.readdirSync(dir)
+        const match = files.find(f => f.startsWith(baseName))
+        if (match) return path.join(dir, match)
+      } catch (e) {}
+    }
+  }
+
   return null
 }
 
@@ -107,7 +126,51 @@ function findFile(urlPath) {
 function serveFile(filePath, res) {
   const ext = path.extname(filePath.replace(/\?.*$/, '')).toLowerCase()
   const contentType = MIME_TYPES[ext] || 'application/octet-stream'
-  const content = fs.readFileSync(filePath)
+  let content = fs.readFileSync(filePath)
+  
+  // Process HTML files - fix base href and remove tracking
+  if (ext === '.html' || ext === '.htm') {
+    let html = content.toString('utf-8')
+    
+    // Rewrite absolute domain URLs to local paths
+    for (const domain of domains) {
+      const escaped = domain.replace(/\./g, '\\.')
+      html = html.replace(new RegExp(`(https?:)?//${escaped}/`, 'g'), `/${domain}/`)
+    }
+    
+    // Fix <base href> to use /__raw/ path for iframe content
+    // Match both https://domain/ and /domain/ formats
+    html = html.replace(/<base\s+href="[^"]+"\s*\/?>/gi, `<base href="/__raw/">`)
+    
+    // Remove tracking scripts (external)
+    html = html.replace(/<script[^>]*src="[^"]*cdn-cgi[^"]*"[^>]*><\/script>/gi, '')
+    html = html.replace(/<script[^>]*src="[^"]*cloudflareinsights[^"]*"[^>]*><\/script>/gi, '')
+    html = html.replace(/<script[^>]*src="[^"]*googletagmanager[^"]*"[^>]*><\/script>/gi, '')
+    // Remove inline GTM/dataLayer scripts (non-greedy, script content only)
+    html = html.replace(/<script[^>]*>([^<]|<(?!\/script))*googletagmanager([^<]|<(?!\/script))*<\/script>/gi, '')
+    html = html.replace(/<script[^>]*>([^<]|<(?!\/script))*dataLayer([^<]|<(?!\/script))*<\/script>/gi, '')
+    html = html.replace(/<noscript[^>]*>([^<]|<(?!\/noscript))*googletagmanager([^<]|<(?!\/noscript))*<\/noscript>/gi, '')
+    
+    // Remove v-loading class from body (don't remove preloader div - regex is too greedy)
+    html = html.replace(/class="v-loading"/gi, 'class=""')
+    
+    // Inject CSS into head to force show content and hide preloader
+    const preloaderCSS = `<style id="preloader-fix">
+/* Hide preloader */
+#v-preloader, .v-preloader, .v-preloader__canvas { display: none !important; opacity: 0 !important; }
+/* Force show all content */
+.menu li { opacity: 1 !important; transform: none !important; }
+.v-header__logo, .page__afterLoad, .home__description, .default, .page-wrap { opacity: 1 !important; visibility: visible !important; }
+.home__h1, .home__h2, .home__h1 h1, .home__h2 h2 { opacity: 1 !important; visibility: visible !important; transform: none !important; }
+.home__description * { opacity: 1 !important; visibility: visible !important; }
+.home__description h1, .home__description h2 { transform: translate(0,0) !important; }
+.home__media { opacity: 1 !important; }
+</style>`
+    html = html.replace(/<\/head>/i, preloaderCSS + '</head>')
+    
+    content = Buffer.from(html, 'utf-8')
+  }
+  
   res.setHeader('Content-Type', contentType)
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Cache-Control', 'public, max-age=3600')
@@ -120,9 +183,22 @@ export default defineConfig({
     {
       name: 'serve-site',
       configureServer(server) {
-        // Middleware: Block Shopify tracking/analytics endpoints (return empty JS)
+        // Middleware: Block tracking/analytics endpoints (return empty JS or 204)
         server.middlewares.use((req, res, next) => {
           const urlPath = decodeURIComponent(req.url || '/').split('?')[0]
+          
+          // Skip Vite internal paths
+          if (urlPath.startsWith('/@') || urlPath.startsWith('/src/') || 
+              urlPath.startsWith('/node_modules/')) {
+            return next()
+          }
+          
+          // Block Cloudflare cdn-cgi (email-decode, rum, beacon, etc.)
+          if (urlPath.includes('cdn-cgi/')) {
+            res.setHeader('Access-Control-Allow-Origin', '*')
+            res.statusCode = 204
+            return res.end()
+          }
           
           if (urlPath.includes('shopifycloud/') || 
               urlPath.includes('checkouts/internal/') ||
@@ -231,20 +307,28 @@ export default defineConfig({
             resolvedPath = mainDomain ? `/${mainDomain}/index.html` : '/index.html'
           }
 
-          // If path starts with a domain folder, use it directly
-          // e.g., /shop.eagles.com/cdn/... -> /shop.eagles.com/cdn/...
-          let filePath = findFile(resolvedPath)
+          // Always try prepending mainDomain first for relative paths
+          let filePath = null
+          const startsWithDomain = domains.some(d => resolvedPath.startsWith('/' + d + '/'))
           
-          // If not found and path doesn't start with domain, try prepending each domain
-          // This handles relative paths like /cdn/shop/... from subdomain pages
+          if (!startsWithDomain && mainDomain) {
+            // Try mainDomain first (most common case)
+            const testPath = '/' + mainDomain + resolvedPath
+            filePath = findFile(testPath)
+          }
+          
+          // If not found, try direct path
           if (!filePath) {
-            const startsWithDomain = domains.some(d => resolvedPath.startsWith('/' + d + '/'))
-            if (!startsWithDomain) {
-              for (const domain of domains) {
-                const testPath = '/' + domain + resolvedPath
-                filePath = findFile(testPath)
-                if (filePath) break
-              }
+            filePath = findFile(resolvedPath)
+          }
+          
+          // If still not found, try other domains
+          if (!filePath && !startsWithDomain) {
+            for (const domain of domains) {
+              if (domain === mainDomain) continue
+              const testPath = '/' + domain + resolvedPath
+              filePath = findFile(testPath)
+              if (filePath) break
             }
           }
           

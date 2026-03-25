@@ -10,18 +10,22 @@ from urllib.parse import urlparse
 
 from .config import DOWNLOADS_DIR, PREVIEWS_DIR
 from .utils import format_size, find_index_file
+from .constants import DEFAULT_HEADERS
 
 
-def download_missing_files(folder_path, base_url, missing_paths):
-    """Download missing files from the original site."""
+def download_missing_files(folder_path, base_url, missing_paths, force=False):
+    """Download missing files from the original site.
+    
+    Args:
+        folder_path: Path to the download folder
+        base_url: Base URL of the site
+        missing_paths: List of file paths to download
+        force: If True, re-download even if file exists
+    """
     import requests
     
     folder_path = Path(folder_path)
     results = []
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-    }
     
     for file_path in missing_paths:
         parts = file_path.split('/')
@@ -33,8 +37,18 @@ def download_missing_files(folder_path, base_url, missing_paths):
         
         local_file = folder_path / file_path
         
+        # Skip if file exists and not forcing
+        if local_file.exists() and not force:
+            results.append({
+                'path': file_path,
+                'status': 'skipped',
+                'reason': 'File already exists',
+                'url': url
+            })
+            continue
+        
         try:
-            response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+            response = requests.get(url, headers=DEFAULT_HEADERS, timeout=15, allow_redirects=True)
             
             if response.status_code == 200 and len(response.content) > 0:
                 local_file.parent.mkdir(parents=True, exist_ok=True)

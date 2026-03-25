@@ -573,6 +573,19 @@ def cleanup_external_domains(job):
     if not job.output_dir.exists():
         return
     
+    # Получаем основной домен сайта из landing.json
+    # Это важно когда скачиваем дополнительный домен в папку основного сайта
+    site_main_domain = None
+    landing_json = job.output_dir / '_wcloner' / 'landing.json'
+    if landing_json.exists():
+        try:
+            import json
+            with open(landing_json, 'r') as f:
+                landing_data = json.load(f)
+                site_main_domain = landing_data.get('domain')
+        except:
+            pass
+    
     removed_count = 0
     for folder in job.output_dir.iterdir():
         if not folder.is_dir():
@@ -581,6 +594,10 @@ def cleanup_external_domains(job):
         folder_name = folder.name
         
         if folder_name in ('hts-cache', 'hts-log.txt', 'cookies.txt', '_wcloner', 'vue-app', '_site'):
+            continue
+        
+        # ВАЖНО: Никогда не удаляем папку основного домена сайта
+        if site_main_domain and folder_name == site_main_domain:
             continue
         
         if not is_domain_allowed(folder_name, filter_config):

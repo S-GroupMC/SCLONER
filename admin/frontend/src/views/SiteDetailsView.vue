@@ -428,6 +428,15 @@
             <span v-if="htmlFixerData?.total_fixes > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full" :class="activeTab === 'htmlfixer' ? 'bg-orange-100 text-orange-700' : 'bg-orange-100 text-orange-600'">{{ htmlFixerData.total_fixes }}</span>
           </button>
           <button 
+            @click="activeTab = 'links'; if (!linksAnalysisData) loadLinksAnalysis()"
+            class="px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center space-x-2"
+            :class="activeTab === 'links' ? 'border-cyan-600 text-cyan-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+          >
+            <i class="fas fa-project-diagram"></i>
+            <span>Анализ ссылок</span>
+            <span v-if="linksAnalysisData?.total_domains > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full" :class="activeTab === 'links' ? 'bg-cyan-100 text-cyan-700' : 'bg-gray-100 text-gray-600'">{{ linksAnalysisData.total_domains }}</span>
+          </button>
+          <button 
             @click="activeTab = 'info'"
             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center space-x-2"
             :class="activeTab === 'info' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
@@ -1381,6 +1390,610 @@
         </div>
       </div>
       
+      <!-- ТАБ: Анализ ссылок -->
+      <div v-show="activeTab === 'links'" class="card">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold text-gray-900 flex items-center">
+            <i class="fas fa-project-diagram mr-2 text-cyan-600"></i>
+            Анализ ссылок и доменов
+          </h2>
+          <div class="flex items-center space-x-2">
+            <button 
+              @click="runDeepLinksAnalysis"
+              :disabled="linksAnalysisLoading || dynamicScanLoading"
+              class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-gradient-to-r from-cyan-500 to-cyan-600 hover:from-cyan-600 hover:to-cyan-700 disabled:opacity-50 shadow-sm transition-all"
+            >
+              <i class="fas mr-1.5" :class="linksAnalysisLoading ? 'fa-spinner fa-spin' : 'fa-search'"></i>
+              {{ linksAnalysisLoading ? 'Анализ...' : 'Глубокий анализ' }}
+            </button>
+            <button 
+              @click="runDynamicScan"
+              :disabled="linksAnalysisLoading || dynamicScanLoading"
+              class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 disabled:opacity-50 shadow-sm transition-all"
+              title="Открывает страницу в браузере и докачивает динамически загружаемые ресурсы (lazy loading, JS)"
+            >
+              <i class="fas mr-1.5" :class="dynamicScanLoading ? 'fa-spinner fa-spin' : 'fa-magic'"></i>
+              {{ dynamicScanLoading ? 'Сканирование...' : 'Докачать динамику' }}
+            </button>
+            <button 
+              @click="loadLinksAnalysis"
+              :disabled="linksAnalysisLoading"
+              class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 shadow-sm transition-all"
+            >
+              <i class="fas fa-sync-alt mr-1.5"></i>Обновить
+            </button>
+          </div>
+        </div>
+        
+        <!-- Результат докачки динамики -->
+        <div v-if="dynamicScanResult" class="mb-4 p-3 rounded-lg border" :class="dynamicScanResult.downloaded > 0 ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4 text-sm">
+              <span class="text-gray-700">
+                <i class="fas fa-magic mr-1 text-purple-500"></i>
+                Динамическое сканирование
+              </span>
+              <span class="text-green-700 font-medium">
+                <i class="fas fa-download mr-1"></i>{{ dynamicScanResult.downloaded }} скачано
+              </span>
+              <span class="text-gray-500">
+                <i class="fas fa-eye mr-1"></i>{{ dynamicScanResult.captured_total || 0 }} запросов
+              </span>
+              <span v-if="dynamicScanResult.skipped" class="text-yellow-600">
+                <i class="fas fa-forward mr-1"></i>{{ dynamicScanResult.skipped }} пропущено
+              </span>
+            </div>
+            <button @click="dynamicScanResult = null" class="text-gray-400 hover:text-gray-600">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div v-if="dynamicScanResult.files?.length > 0" class="mt-2 text-xs text-gray-600">
+            <div v-for="file in dynamicScanResult.files.slice(0, 5)" :key="file.path" class="truncate">
+              <i class="fas fa-file mr-1 text-green-500"></i>{{ file.path }}
+            </div>
+            <div v-if="dynamicScanResult.files.length > 5" class="text-gray-400 mt-1">
+              ... и ещё {{ dynamicScanResult.files.length - 5 }} файлов
+            </div>
+          </div>
+        </div>
+        
+        <!-- Загрузка -->
+        <div v-if="linksAnalysisLoading" class="flex items-center justify-center py-12">
+          <i class="fas fa-spinner fa-spin text-3xl text-cyan-500 mr-3"></i>
+          <span class="text-gray-500">Анализ ссылок и доменов...</span>
+        </div>
+        
+        <!-- Результаты анализа -->
+        <div v-else-if="linksAnalysisData">
+          <!-- Предупреждение о необходимых доменах -->
+          <div v-if="requiredNotDownloaded.length > 0" class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center text-red-800">
+                <i class="fas fa-exclamation-triangle mr-2 text-red-600"></i>
+                <span class="font-medium">{{ requiredNotDownloaded.length }} обязательных доменов не скачано!</span>
+                <span class="ml-2 text-sm text-red-600">Сайт может работать некорректно</span>
+              </div>
+              <button 
+                @click="downloadAllRequired"
+                class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-red-600 hover:bg-red-700"
+              >
+                <i class="fas fa-download mr-1"></i>Скачать все обязательные
+              </button>
+            </div>
+            <div class="mt-2 flex flex-wrap gap-1">
+              <span v-for="d in requiredNotDownloaded.slice(0, 5)" :key="d.domain" class="inline-flex items-center px-2 py-0.5 rounded text-xs bg-red-100 text-red-700">
+                {{ d.domain }}
+              </span>
+              <span v-if="requiredNotDownloaded.length > 5" class="text-xs text-red-500">
+                +{{ requiredNotDownloaded.length - 5 }} ещё
+              </span>
+            </div>
+          </div>
+          
+          <!-- Статистика по источникам -->
+          <div v-if="linksAnalysisData.source_stats" class="mb-3 p-2 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center flex-wrap gap-4 text-sm">
+            <span class="flex items-center text-gray-600">
+              <i class="fas fa-hdd mr-1.5 text-gray-500"></i>
+              Локально: <strong class="ml-1">{{ linksAnalysisData.source_stats.local_only || 0 }}</strong>
+            </span>
+            <span v-if="linksAnalysisData.source_stats.deep_scan" class="flex items-center text-purple-600">
+              <i class="fas fa-search-plus mr-1.5 text-purple-500"></i>
+              Глубокий скан: <strong class="ml-1">{{ linksAnalysisData.source_stats.deep_scan || 0 }}</strong>
+            </span>
+            <span v-if="linksAnalysisData.source_stats.wget_log" class="flex items-center text-orange-600">
+              <i class="fas fa-file-alt mr-1.5 text-orange-500"></i>
+              Из логов: <strong class="ml-1">{{ linksAnalysisData.source_stats.wget_log || 0 }}</strong>
+            </span>
+            <span class="flex items-center text-blue-600">
+              <i class="fas fa-cloud mr-1.5 text-blue-500"></i>
+              Онлайн: <strong class="ml-1">{{ linksAnalysisData.source_stats.online_only || 0 }}</strong>
+            </span>
+            <span class="flex items-center text-green-600">
+              <i class="fas fa-check-double mr-1.5 text-green-500"></i>
+              Несколько: <strong class="ml-1">{{ linksAnalysisData.source_stats.both || 0 }}</strong>
+            </span>
+          </div>
+          
+          <!-- Сводка -->
+          <div class="grid grid-cols-6 gap-3 mb-4">
+            <div class="bg-cyan-50 rounded-lg px-3 py-2 text-center border border-cyan-100">
+              <div class="text-xl font-bold text-cyan-700">{{ linksAnalysisData.total_domains || 0 }}</div>
+              <div class="text-xs text-cyan-600 font-medium">Всего доменов</div>
+            </div>
+            <div class="bg-blue-50 rounded-lg px-3 py-2 text-center border border-blue-100">
+              <div class="text-xl font-bold text-blue-700">{{ linksAnalysisData.categories?.main?.length || 0 }}</div>
+              <div class="text-xs text-blue-600 font-medium">Основные</div>
+            </div>
+            <div class="bg-purple-50 rounded-lg px-3 py-2 text-center border border-purple-100">
+              <div class="text-xl font-bold text-purple-700">{{ linksAnalysisData.categories?.cdn?.length || 0 }}</div>
+              <div class="text-xs text-purple-600 font-medium">CDN</div>
+            </div>
+            <div class="bg-green-50 rounded-lg px-3 py-2 text-center border border-green-100">
+              <div class="text-xl font-bold text-green-700">{{ linksAnalysisData.total_pages || 0 }}</div>
+              <div class="text-xs text-green-600 font-medium">Страниц</div>
+            </div>
+            <div class="bg-red-50 rounded-lg px-3 py-2 text-center border border-red-100">
+              <div class="text-xl font-bold text-red-700">{{ requiredNotDownloaded.length }}</div>
+              <div class="text-xs text-red-600 font-medium">Нужно скачать</div>
+            </div>
+            <div class="bg-orange-50 rounded-lg px-3 py-2 text-center border border-orange-100">
+              <div class="text-xl font-bold text-orange-700">{{ linksAnalysisData.missing_count || 0 }}</div>
+              <div class="text-xs text-orange-600 font-medium">Не скачано</div>
+            </div>
+          </div>
+          
+          <!-- Фильтр по категориям -->
+          <div class="flex flex-wrap gap-2 mb-4">
+            <button 
+              @click="linksFilter = 'all'"
+              :class="linksFilter === 'all' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors"
+            >Все домены</button>
+            <button 
+              @click="linksFilter = 'main'"
+              :class="linksFilter === 'main' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors"
+            >
+              <i class="fas fa-star mr-1"></i>Основные ({{ linksAnalysisData.categories?.main?.length || 0 }})
+            </button>
+            <button 
+              @click="linksFilter = 'cdn'"
+              :class="linksFilter === 'cdn' ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-700 hover:bg-purple-100'"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors"
+            >
+              <i class="fas fa-cloud mr-1"></i>CDN ({{ linksAnalysisData.categories?.cdn?.length || 0 }})
+            </button>
+            <button 
+              @click="linksFilter = 'external'"
+              :class="linksFilter === 'external' ? 'bg-gray-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors"
+            >
+              <i class="fas fa-external-link-alt mr-1"></i>Внешние ({{ linksAnalysisData.categories?.external?.length || 0 }})
+            </button>
+            <button 
+              @click="linksFilter = 'pages'"
+              :class="linksFilter === 'pages' ? 'bg-green-600 text-white' : 'bg-green-50 text-green-700 hover:bg-green-100'"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors"
+            >
+              <i class="fas fa-file-alt mr-1"></i>Страницы ({{ linksAnalysisData.total_pages || 0 }})
+            </button>
+          </div>
+          
+          <!-- Список доменов -->
+          <div v-if="linksFilter !== 'pages'" class="border border-gray-200 rounded-lg overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 border-b">
+                <tr>
+                  <th class="px-3 py-2 text-center w-10">
+                    <input type="checkbox" @change="toggleAllLinksDomains" :checked="allLinksDomainsSelected" class="w-4 h-4 rounded">
+                  </th>
+                  <th class="px-3 py-2 text-left font-semibold text-gray-600">Домен</th>
+                  <th class="px-3 py-2 text-left font-semibold text-gray-600">Категория</th>
+                  <th class="px-3 py-2 text-center font-semibold text-gray-600">Ссылок</th>
+                  <th class="px-3 py-2 text-center font-semibold text-gray-600">Статус</th>
+                  <th class="px-3 py-2 text-right font-semibold text-gray-600">Действия</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <tr 
+                  v-for="domain in filteredLinksDomains" 
+                  :key="domain.domain"
+                  class="hover:bg-gray-50 transition-colors"
+                  :class="selectedLinksDomains[domain.domain] ? 'bg-cyan-50/50' : ''"
+                >
+                  <td class="px-3 py-2 text-center">
+                    <input 
+                      type="checkbox" 
+                      v-model="selectedLinksDomains[domain.domain]"
+                      class="w-4 h-4 rounded text-cyan-600"
+                    >
+                  </td>
+                  <td class="px-3 py-2">
+                    <div class="flex items-center space-x-2">
+                      <i class="fas fa-globe text-gray-400"></i>
+                      <span class="font-medium text-gray-900">{{ domain.domain }}</span>
+                      <!-- Источник: local/online/wget2/wget_log/both -->
+                      <span v-if="domain.source === 'online'" class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700" title="Найден только онлайн (не в скачанных файлах)">
+                        <i class="fas fa-cloud mr-0.5"></i>онлайн
+                      </span>
+                      <span v-else-if="domain.source === 'deep_scan'" class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700" title="Найден при глубоком онлайн сканировании">
+                        <i class="fas fa-search-plus mr-0.5"></i>скан
+                      </span>
+                      <span v-else-if="domain.source === 'wget_log'" class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700" title="Найден в логах wget (был при скачивании)">
+                        <i class="fas fa-file-alt mr-0.5"></i>лог
+                      </span>
+                      <span v-else-if="domain.source === 'local'" class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Найден только в скачанных файлах">
+                        <i class="fas fa-hdd mr-0.5"></i>локально
+                      </span>
+                      <span v-else-if="domain.source === 'both'" class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700" title="Найден в нескольких источниках">
+                        <i class="fas fa-check-double mr-0.5"></i>оба
+                      </span>
+                      <span v-if="domain.required && !domain.is_downloaded" class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 animate-pulse" title="Обязательно к скачиванию!">
+                        <i class="fas fa-exclamation-triangle mr-0.5"></i>НУЖЕН
+                      </span>
+                    </div>
+                  </td>
+                  <td class="px-3 py-2">
+                    <div class="flex items-center space-x-1">
+                      <span 
+                        class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                        :class="getDomainCategoryClass(domain.category)"
+                      >
+                        <i :class="getDomainCategoryIcon(domain.category)" class="mr-1"></i>
+                        {{ getDomainCategoryLabel(domain.category) }}
+                      </span>
+                      <span v-if="domain.priority === 'critical'" class="text-red-500" title="Критически важный">
+                        <i class="fas fa-star"></i>
+                      </span>
+                      <span v-else-if="domain.priority === 'high'" class="text-orange-500" title="Высокий приоритет">
+                        <i class="fas fa-arrow-up"></i>
+                      </span>
+                      <span v-else-if="domain.priority === 'optional'" class="text-gray-400" title="Опционально">
+                        <i class="fas fa-minus"></i>
+                      </span>
+                      <span v-else-if="domain.priority === 'skip'" class="text-gray-300" title="Пропустить">
+                        <i class="fas fa-ban"></i>
+                      </span>
+                    </div>
+                  </td>
+                  <td class="px-3 py-2 text-center text-gray-600">{{ domain.count || 0 }}</td>
+                  <td class="px-3 py-2 text-center">
+                    <!-- Downloading progress -->
+                    <div v-if="getDomainDownloadStatus(domain.domain)" class="flex items-center space-x-2">
+                      <div class="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden min-w-[60px]">
+                        <div 
+                          class="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-300"
+                          :style="{ width: getDomainDownloadStatus(domain.domain).progress + '%' }"
+                        ></div>
+                      </div>
+                      <span class="text-xs text-blue-600 font-medium">{{ getDomainDownloadStatus(domain.domain).progress }}%</span>
+                    </div>
+                    <!-- Static status -->
+                    <span v-else-if="domain.is_downloaded" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      <i class="fas fa-check mr-1"></i>Скачано
+                    </span>
+                    <span v-else-if="domain.required" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                      <i class="fas fa-exclamation mr-1"></i>Не скачано!
+                    </span>
+                    <span v-else class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                      <i class="fas fa-clock mr-1"></i>Не скачано
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-right">
+                    <div class="flex items-center justify-end space-x-1">
+                      <!-- Show logs button if downloading -->
+                      <button 
+                        v-if="getDomainDownloadStatus(domain.domain)"
+                        @click="showDomainLogs(domain.domain)"
+                        class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-white bg-blue-600 hover:bg-blue-700"
+                        title="Показать логи"
+                      >
+                        <i class="fas fa-terminal mr-1"></i>Логи
+                      </button>
+                      <button 
+                        v-if="!domain.is_downloaded && !getDomainDownloadStatus(domain.domain) && domain.category !== 'tracker'"
+                        @click="downloadDomain(domain)"
+                        class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-white bg-green-600 hover:bg-green-700"
+                        title="Скачать домен"
+                      >
+                        <i class="fas fa-download mr-1"></i>Скачать
+                      </button>
+                      <button 
+                        v-if="domain.is_downloaded && !getDomainDownloadStatus(domain.domain)"
+                        @click="redownloadDomain(domain)"
+                        class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-white bg-orange-500 hover:bg-orange-600"
+                        title="Перекачать домен"
+                      >
+                        <i class="fas fa-sync-alt mr-1"></i>Перекачать
+                      </button>
+                      <a 
+                        v-if="domain.is_downloaded && siteData?.server?.running"
+                        :href="getLocalDomainUrl(domain.domain)"
+                        target="_blank"
+                        class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-white bg-purple-600 hover:bg-purple-700"
+                        title="Открыть локальную копию"
+                      >
+                        <i class="fas fa-hdd mr-1"></i>Локально
+                      </a>
+                      <span 
+                        v-else-if="domain.is_downloaded && !siteData?.server?.running"
+                        class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-gray-400 bg-gray-100 cursor-not-allowed"
+                        title="Запустите сервер чтобы открыть локальную копию"
+                      >
+                        <i class="fas fa-hdd mr-1"></i>Локально
+                      </span>
+                      <a 
+                        :href="'https://' + domain.domain"
+                        target="_blank"
+                        class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-gray-700 bg-gray-100 hover:bg-gray-200"
+                        title="Открыть оригинал онлайн"
+                      >
+                        <i class="fas fa-external-link-alt mr-1"></i>Онлайн
+                      </a>
+                      <button 
+                        v-if="domain.category === 'external' || domain.category === 'tracker'"
+                        @click="blockDomain(domain)"
+                        class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-red-700 bg-red-100 hover:bg-red-200"
+                        title="Блокировать"
+                      >
+                        <i class="fas fa-ban mr-1"></i>Блок
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            
+            <!-- Массовые действия -->
+            <div v-if="selectedLinksDomainsCount > 0" class="bg-cyan-50 border-t border-cyan-200 px-4 py-3 flex items-center justify-between">
+              <span class="text-sm text-cyan-800">
+                <i class="fas fa-check-circle mr-1"></i>
+                Выбрано: {{ selectedLinksDomainsCount }} доменов
+              </span>
+              <div class="flex items-center space-x-2">
+                <button 
+                  @click="downloadSelectedDomains"
+                  class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded text-white bg-green-600 hover:bg-green-700"
+                >
+                  <i class="fas fa-download mr-1"></i>Скачать выбранные
+                </button>
+                <button 
+                  @click="addSelectedToDownloadList"
+                  class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded text-white bg-blue-600 hover:bg-blue-700"
+                >
+                  <i class="fas fa-plus mr-1"></i>Добавить в список
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Список страниц -->
+          <div v-if="linksFilter === 'pages'" class="border border-gray-200 rounded-lg overflow-hidden">
+            <div class="bg-gray-50 border-b px-4 py-2 flex items-center justify-between">
+              <span class="text-sm font-semibold text-gray-700">Найденные страницы</span>
+              <div class="flex items-center space-x-2">
+                <input 
+                  v-model="pagesSearchQuery"
+                  type="text"
+                  placeholder="Поиск страниц..."
+                  class="px-3 py-1 text-xs border border-gray-300 rounded-lg w-48"
+                >
+                <select v-model="pagesStatusFilter" class="px-2 py-1 text-xs border border-gray-300 rounded-lg">
+                  <option value="all">Все</option>
+                  <option value="downloaded">Скачанные</option>
+                  <option value="missing">Отсутствующие</option>
+                </select>
+              </div>
+            </div>
+            <div class="max-h-96 overflow-y-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b sticky top-0">
+                  <tr>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-600">Страница</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-600">Домен</th>
+                    <th class="px-3 py-2 text-center font-semibold text-gray-600">Статус</th>
+                    <th class="px-3 py-2 text-right font-semibold text-gray-600">Действия</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                  <tr 
+                    v-for="page in filteredLinksPages" 
+                    :key="page.url"
+                    class="hover:bg-gray-50"
+                    :class="page.is_downloaded ? '' : 'bg-yellow-50/30'"
+                  >
+                    <td class="px-3 py-2">
+                      <div class="font-mono text-xs text-gray-800 truncate max-w-xs" :title="page.path">{{ page.path }}</div>
+                    </td>
+                    <td class="px-3 py-2 text-xs text-gray-500">{{ page.domain }}</td>
+                    <td class="px-3 py-2 text-center">
+                      <span v-if="page.is_downloaded" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        <i class="fas fa-check mr-1"></i>OK
+                      </span>
+                      <span v-else class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                        <i class="fas fa-times mr-1"></i>404
+                      </span>
+                    </td>
+                    <td class="px-3 py-2 text-right">
+                      <div class="flex items-center justify-end space-x-1">
+                        <button 
+                          v-if="!page.is_downloaded"
+                          @click="downloadSinglePage(page)"
+                          class="text-green-600 hover:text-green-800"
+                          title="Скачать страницу"
+                        >
+                          <i class="fas fa-download"></i>
+                        </button>
+                        <button 
+                          v-if="page.is_downloaded"
+                          @click="redownloadSinglePage(page)"
+                          class="text-orange-500 hover:text-orange-700"
+                          title="Перекачать"
+                        >
+                          <i class="fas fa-sync-alt"></i>
+                        </button>
+                        <a 
+                          :href="page.url"
+                          target="_blank"
+                          class="text-blue-500 hover:text-blue-700"
+                          title="Открыть онлайн"
+                        >
+                          <i class="fas fa-external-link-alt"></i>
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          
+          <!-- Секция проверки 404 -->
+          <div class="mt-6 border-t pt-4">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-md font-bold text-gray-900 flex items-center">
+                <i class="fas fa-exclamation-triangle mr-2 text-orange-500"></i>
+                Проверка страниц на 404
+              </h3>
+              <div class="flex items-center space-x-2">
+                <button 
+                  @click="checkLocalLinks"
+                  :disabled="pageCheckLoading"
+                  class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50"
+                >
+                  <i class="fas mr-1.5" :class="pageCheckLoading ? 'fa-spinner fa-spin' : 'fa-search'"></i>
+                  Локальная проверка
+                </button>
+                <button 
+                  @click="checkPagesOnline"
+                  :disabled="pageCheckOnlineLoading"
+                  class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-red-500 hover:bg-red-600 disabled:opacity-50"
+                >
+                  <i class="fas mr-1.5" :class="pageCheckOnlineLoading ? 'fa-spinner fa-spin' : 'fa-globe'"></i>
+                  Онлайн проверка
+                </button>
+              </div>
+            </div>
+            
+            <!-- Результаты локальной проверки -->
+            <div v-if="pageCheckResult" class="mb-4 p-3 rounded-lg border" :class="pageCheckResult.total_broken > 0 ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200'">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center space-x-4 text-sm">
+                  <span class="font-medium" :class="pageCheckResult.total_broken > 0 ? 'text-orange-800' : 'text-green-800'">
+                    <i class="fas mr-1" :class="pageCheckResult.total_broken > 0 ? 'fa-exclamation-triangle text-orange-500' : 'fa-check-circle text-green-500'"></i>
+                    Локальная проверка
+                  </span>
+                  <span class="text-gray-600">{{ pageCheckResult.pages_checked }} страниц проверено</span>
+                  <span v-if="pageCheckResult.total_broken > 0" class="text-orange-700 font-medium">
+                    {{ pageCheckResult.total_broken }} битых ссылок
+                  </span>
+                  <span v-if="brokenLinksData?.analysis?.summary" class="text-green-600 text-xs">
+                    (можно исправить: {{ brokenLinksData.analysis.summary.can_fix_now }})
+                  </span>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <button 
+                    v-if="pageCheckResult.total_broken > 0"
+                    @click="analyzeAndFixBrokenLinks"
+                    :disabled="brokenLinksFixing"
+                    class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                  >
+                    <i class="fas mr-1" :class="brokenLinksFixing ? 'fa-spinner fa-spin' : 'fa-wrench'"></i>
+                    Исправить
+                  </button>
+                  <button @click="pageCheckResult = null" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Группировка по типу -->
+              <div v-if="pageCheckResult.by_type && Object.keys(pageCheckResult.by_type).length > 0" class="flex flex-wrap gap-2 mb-2">
+                <span v-for="(items, type) in pageCheckResult.by_type" :key="type" class="inline-flex items-center px-2 py-0.5 rounded text-xs bg-white border">
+                  <i :class="getTypeIcon(type)" class="mr-1"></i>
+                  {{ type }}: {{ items.length }}
+                </span>
+              </div>
+              
+              <!-- Список битых ссылок -->
+              <div v-if="pageCheckResult.broken_links?.length > 0" class="max-h-40 overflow-y-auto text-xs">
+                <div v-for="(link, i) in pageCheckResult.broken_links.slice(0, 10)" :key="i" class="py-1 border-b border-orange-100 last:border-0">
+                  <div class="flex items-center space-x-2">
+                    <i :class="getTypeIcon(link.type)" class="text-xs"></i>
+                    <span class="text-gray-700 truncate flex-1">{{ link.link }}</span>
+                    <span class="text-gray-400 text-xs">из {{ link.referenced_from }}</span>
+                  </div>
+                </div>
+                <div v-if="pageCheckResult.broken_links.length > 10" class="text-gray-400 mt-1">
+                  ... и ещё {{ pageCheckResult.broken_links.length - 10 }} ссылок
+                </div>
+              </div>
+            </div>
+            
+            <!-- Результаты онлайн проверки -->
+            <div v-if="pageCheckOnlineResult" class="p-3 rounded-lg border" :class="pageCheckOnlineResult.errors > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center space-x-4 text-sm">
+                  <span class="font-medium" :class="pageCheckOnlineResult.errors > 0 ? 'text-red-800' : 'text-green-800'">
+                    <i class="fas mr-1" :class="pageCheckOnlineResult.errors > 0 ? 'fa-times-circle text-red-500' : 'fa-check-circle text-green-500'"></i>
+                    Онлайн проверка
+                  </span>
+                  <span class="text-green-600">{{ pageCheckOnlineResult.ok }} OK</span>
+                  <span v-if="pageCheckOnlineResult.errors > 0" class="text-red-600 font-medium">{{ pageCheckOnlineResult.errors }} ошибок</span>
+                  <span v-if="pageCheckOnlineResult.redirects > 0" class="text-yellow-600">{{ pageCheckOnlineResult.redirects }} редиректов</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <button 
+                    v-if="pageCheckOnlineResult.errors > 0"
+                    @click="fixBrokenLinks"
+                    class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-white bg-blue-600 hover:bg-blue-700"
+                  >
+                    <i class="fas fa-wrench mr-1"></i>Исправить
+                  </button>
+                  <button 
+                    @click="downloadWorkingPages"
+                    class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-white bg-green-600 hover:bg-green-700"
+                  >
+                    <i class="fas fa-download mr-1"></i>Докачать
+                  </button>
+                  <button @click="pageCheckOnlineResult = null" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Список ошибок -->
+              <div v-if="pageCheckOnlineResult.results?.filter(r => r.is_error).length > 0" class="max-h-48 overflow-y-auto text-xs">
+                <div v-for="(result, i) in pageCheckOnlineResult.results.filter(r => r.is_error).slice(0, 15)" :key="i" class="py-2 border-b border-red-100 last:border-0">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-2 flex-1 min-w-0">
+                      <span :class="getStatusClass(result.status_code)" class="px-1.5 py-0.5 rounded text-xs font-mono">
+                        {{ result.status_code || 'ERR' }}
+                      </span>
+                      <span class="text-gray-700 truncate">{{ result.url }}</span>
+                    </div>
+                  </div>
+                  <div v-if="result.reason" class="mt-1 ml-10 text-gray-500">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    {{ result.reason.description }}
+                    <span v-if="result.reason.can_fix" class="text-green-600 ml-2">
+                      <i class="fas fa-check"></i> Можно исправить
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Пустое состояние -->
+        <div v-else class="bg-gray-50 rounded-lg p-8 text-center text-gray-500">
+          <i class="fas fa-project-diagram text-4xl mb-3"></i>
+          <p>Нажмите "Глубокий анализ" для сканирования всех ссылок</p>
+          <p class="text-xs mt-2">Анализ доменов, поддоменов, CDN и внешних ресурсов</p>
+        </div>
+      </div>
+      
       <!-- ТАБ: Информация -->
       <div v-show="activeTab === 'info'" class="card">
         <h2 class="text-lg font-bold text-gray-900 flex items-center mb-4">
@@ -2115,6 +2728,14 @@
         </div>
       </div>
     </Teleport>
+    
+    <!-- Download Manager -->
+    <DownloadManager 
+      ref="downloadManager"
+      :folder-name="folderName"
+      @download-complete="onDownloadComplete"
+      @download-error="onDownloadError"
+    />
   </div>
 </template>
 
@@ -2124,6 +2745,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useLandingsStore } from '../stores/landings'
 import { fetchApi, fetchJson } from '../utils/fetchApi'
 import { config } from '../config'
+import DownloadManager from '../components/DownloadManager.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -2178,6 +2800,61 @@ const runningServers = ref({ vue: false, backend: false })
 const restartingVue = ref(false)
 const serverLaunchSteps = ref([])
 const serverLaunchError = ref(null)
+
+// Links Analysis tab state
+const linksAnalysisData = ref(null)
+const linksAnalysisLoading = ref(false)
+const linksFilter = ref('all')
+const selectedLinksDomains = ref({})
+
+// Broken links state
+const brokenLinksData = ref(null)
+const brokenLinksLoading = ref(false)
+const brokenLinksFixing = ref(false)
+const showBrokenLinksDetails = ref(false)
+const pagesSearchQuery = ref('')
+const pagesStatusFilter = ref('all')
+const dynamicScanLoading = ref(false)
+const dynamicScanResult = ref(null)
+const downloadManager = ref(null)
+
+// Page checker state
+const pageCheckLoading = ref(false)
+const pageCheckResult = ref(null)
+const pageCheckOnlineLoading = ref(false)
+const pageCheckOnlineResult = ref(null)
+
+// Download manager event handlers
+function onDownloadComplete(download) {
+  showSuccess(`Загрузка завершена: ${download.domain}`)
+  // Update domain status locally
+  updateDomainDownloadStatus(download.domain, true)
+}
+
+function onDownloadError(download) {
+  showError(`Ошибка загрузки: ${download.domain}`)
+}
+
+function updateDomainDownloadStatus(domainName, isDownloaded) {
+  if (!linksAnalysisData.value?.categories) return
+  
+  // Update in all categories
+  const categories = ['main', 'cdn', 'external', 'related']
+  for (const cat of categories) {
+    const list = linksAnalysisData.value.categories[cat]
+    if (!list) continue
+    
+    const domain = list.find(d => d.domain === domainName)
+    if (domain) {
+      domain.is_downloaded = isDownloaded
+      domain.downloading = false
+      break
+    }
+  }
+  
+  // Force reactivity update
+  linksAnalysisData.value = { ...linksAnalysisData.value }
+}
 
 // Toast notifications system
 const toasts = ref([])
@@ -2516,6 +3193,550 @@ function toggleAllFolders() {
     allExpanded.value = true
   }
 }
+
+// ============ Links Analysis Tab ============
+
+const filteredLinksDomains = computed(() => {
+  if (!linksAnalysisData.value) return []
+  
+  let domains = []
+  const cats = linksAnalysisData.value.categories || {}
+  
+  if (linksFilter.value === 'all') {
+    domains = [...(cats.main || []), ...(cats.cdn || []), ...(cats.related || []), ...(cats.external || [])]
+  } else if (linksFilter.value === 'main') {
+    domains = cats.main || []
+  } else if (linksFilter.value === 'cdn') {
+    domains = cats.cdn || []
+  } else if (linksFilter.value === 'external') {
+    domains = [...(cats.external || []), ...(cats.related || [])]
+  }
+  
+  return domains.sort((a, b) => (b.count || 0) - (a.count || 0))
+})
+
+const filteredLinksPages = computed(() => {
+  if (!linksAnalysisData.value?.pages) return []
+  
+  let pages = linksAnalysisData.value.pages
+  
+  if (pagesSearchQuery.value) {
+    const q = pagesSearchQuery.value.toLowerCase()
+    pages = pages.filter(p => p.path?.toLowerCase().includes(q) || p.domain?.toLowerCase().includes(q))
+  }
+  
+  if (pagesStatusFilter.value === 'downloaded') {
+    pages = pages.filter(p => p.is_downloaded)
+  } else if (pagesStatusFilter.value === 'missing') {
+    pages = pages.filter(p => !p.is_downloaded)
+  }
+  
+  return pages.slice(0, 200) // Limit for performance
+})
+
+const allLinksDomainsSelected = computed(() => {
+  const domains = filteredLinksDomains.value
+  if (domains.length === 0) return false
+  return domains.every(d => selectedLinksDomains.value[d.domain])
+})
+
+const selectedLinksDomainsCount = computed(() => {
+  return Object.values(selectedLinksDomains.value).filter(Boolean).length
+})
+
+const requiredNotDownloaded = computed(() => {
+  if (!linksAnalysisData.value?.categories) return []
+  
+  const all = [
+    ...(linksAnalysisData.value.categories.main || []),
+    ...(linksAnalysisData.value.categories.cdn || [])
+  ]
+  
+  return all.filter(d => d.required && !d.is_downloaded)
+})
+
+function getDomainCategoryClass(category) {
+  switch (category) {
+    case 'main': return 'bg-blue-100 text-blue-800'
+    case 'cdn': return 'bg-purple-100 text-purple-800'
+    case 'related': return 'bg-green-100 text-green-800'
+    case 'external': return 'bg-gray-100 text-gray-800'
+    case 'tracker': return 'bg-red-100 text-red-800'
+    default: return 'bg-gray-100 text-gray-600'
+  }
+}
+
+function getDomainCategoryIcon(category) {
+  switch (category) {
+    case 'main': return 'fas fa-star'
+    case 'cdn': return 'fas fa-cloud'
+    case 'related': return 'fas fa-link'
+    case 'external': return 'fas fa-external-link-alt'
+    case 'tracker': return 'fas fa-chart-bar'
+    default: return 'fas fa-globe'
+  }
+}
+
+function getDomainCategoryLabel(category) {
+  switch (category) {
+    case 'main': return 'Основной'
+    case 'cdn': return 'CDN'
+    case 'related': return 'Связанный'
+    case 'external': return 'Внешний'
+    case 'tracker': return 'Трекер'
+    default: return category || 'Другое'
+  }
+}
+
+function toggleAllLinksDomains(event) {
+  const checked = event.target.checked
+  const newSelected = { ...selectedLinksDomains.value }
+  for (const domain of filteredLinksDomains.value) {
+    newSelected[domain.domain] = checked
+  }
+  selectedLinksDomains.value = newSelected
+}
+
+async function loadLinksAnalysis() {
+  linksAnalysisLoading.value = true
+  try {
+    // Try to load from saved scan result first
+    const data = await fetchJson(`/api/downloads/${folderName.value}/links-analysis`)
+    linksAnalysisData.value = data
+  } catch (err) {
+    console.error('Error loading links analysis:', err)
+    // If no saved data, show empty state
+    linksAnalysisData.value = null
+  } finally {
+    linksAnalysisLoading.value = false
+  }
+}
+
+async function runDeepLinksAnalysis() {
+  linksAnalysisLoading.value = true
+  try {
+    const url = siteData.value.url || `https://${siteData.value.domain || folderName.value}`
+    const data = await fetchJson(`/api/downloads/${folderName.value}/analyze-links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, max_pages: 50 })
+    })
+    linksAnalysisData.value = data
+    showSuccess(`Анализ завершён: ${data.total_domains || 0} доменов, ${data.total_pages || 0} страниц`)
+  } catch (err) {
+    console.error('Error running deep analysis:', err)
+    showError('Ошибка анализа: ' + err.message)
+  } finally {
+    linksAnalysisLoading.value = false
+  }
+}
+
+async function checkBrokenLinks() {
+  brokenLinksLoading.value = true
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/broken-links`)
+    brokenLinksData.value = data
+    if (data.check_result?.total_broken > 0) {
+      showSuccess(`Найдено ${data.check_result.total_broken} битых ссылок`)
+    } else {
+      showSuccess('Битых ссылок не найдено')
+    }
+  } catch (err) {
+    console.error('Error checking broken links:', err)
+    showError('Ошибка проверки: ' + err.message)
+  } finally {
+    brokenLinksLoading.value = false
+  }
+}
+
+async function fixBrokenLinksAuto() {
+  brokenLinksFixing.value = true
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/fix-broken-links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'auto' })
+    })
+    
+    const fixed = data.fix_result?.summary?.fixed || 0
+    const needDownload = data.need_download?.length || 0
+    
+    if (fixed > 0) {
+      showSuccess(`Исправлено ${fixed} ссылок`)
+    }
+    if (needDownload > 0) {
+      showSuccess(`${needDownload} ссылок требуют скачивания файлов`)
+    }
+    
+    // Обновляем данные
+    await checkBrokenLinks()
+  } catch (err) {
+    console.error('Error fixing broken links:', err)
+    showError('Ошибка исправления: ' + err.message)
+  } finally {
+    brokenLinksFixing.value = false
+  }
+}
+
+async function analyzeAndFixBrokenLinks() {
+  brokenLinksFixing.value = true
+  try {
+    // Сначала получаем анализ битых ссылок
+    const analysisData = await fetchJson(`/api/downloads/${folderName.value}/broken-links`)
+    brokenLinksData.value = analysisData
+    
+    const canFix = analysisData.analysis?.summary?.can_fix_now || 0
+    
+    if (canFix === 0) {
+      showWarning('Нет ссылок которые можно исправить автоматически')
+      return
+    }
+    
+    // Исправляем
+    const fixData = await fetchJson(`/api/downloads/${folderName.value}/fix-broken-links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'auto' })
+    })
+    
+    const fixed = fixData.fix_result?.summary?.fixed || 0
+    const needDownload = fixData.need_download?.length || 0
+    
+    if (fixed > 0) {
+      showSuccess(`Исправлено ${fixed} ссылок`)
+    }
+    if (needDownload > 0) {
+      showWarning(`${needDownload} ссылок требуют скачивания файлов`)
+    }
+    
+    // Обновляем локальную проверку
+    await runLocalCheck()
+  } catch (err) {
+    console.error('Error fixing broken links:', err)
+    showError('Ошибка исправления: ' + err.message)
+  } finally {
+    brokenLinksFixing.value = false
+  }
+}
+
+function getLinkTypeName(type) {
+  const names = {
+    'page': 'Страницы',
+    'script': 'Скрипты',
+    'style': 'Стили',
+    'image': 'Изображения',
+    'font': 'Шрифты',
+    'media': 'Медиа',
+    'data': 'Данные',
+    'other': 'Другое'
+  }
+  return names[type] || type
+}
+
+function getLocalDomainUrl(domainName) {
+  // Возвращает URL локальной копии домена
+  // Домен хранится в папке folderName/domainName/
+  const server = siteData.value?.server
+  if (server?.running && server?.port) {
+    return `http://localhost:${server.port}/${domainName}/`
+  }
+  // Если сервер не запущен, открываем через основной домен сайта
+  // или показываем путь к файлу
+  return `http://localhost:${server?.port || 3000}/${domainName}/`
+}
+
+async function downloadDomain(domain) {
+  try {
+    // Mark domain as downloading
+    domain.downloading = true
+    domain.downloadProgress = 0
+    
+    // Use download manager
+    const jobId = await downloadManager.value.addDownload(domain.domain, `https://${domain.domain}`)
+    domain.jobId = jobId
+    
+    showSuccess(`Скачивание запущено: ${domain.domain}`)
+  } catch (err) {
+    domain.downloading = false
+    showError('Ошибка: ' + err.message)
+  }
+}
+
+async function redownloadDomain(domain) {
+  try {
+    domain.downloading = true
+    domain.downloadProgress = 0
+    
+    const jobId = await downloadManager.value.addDownload(domain.domain, `https://${domain.domain}`)
+    domain.jobId = jobId
+    
+    showSuccess(`Перекачивание запущено: ${domain.domain}`)
+  } catch (err) {
+    domain.downloading = false
+    showError('Ошибка: ' + err.message)
+  }
+}
+
+function blockDomain(domain) {
+  showInfo(`Домен ${domain.domain} будет заблокирован (функция в разработке)`)
+}
+
+function getDomainDownloadStatus(domainName) {
+  if (!downloadManager.value) return null
+  const downloads = downloadManager.value.downloads
+  return downloads.find(d => d.domain === domainName && (d.status === 'running' || d.status === 'paused'))
+}
+
+function showDomainLogs(domainName) {
+  if (!downloadManager.value) return
+  const download = downloadManager.value.downloads.find(d => d.domain === domainName)
+  if (download) {
+    downloadManager.value.isExpanded = true
+    // Trigger logs modal in download manager
+    setTimeout(() => {
+      const logsBtn = document.querySelector(`[data-domain-logs="${domainName}"]`)
+      if (logsBtn) logsBtn.click()
+    }, 100)
+  }
+}
+
+async function downloadSelectedDomains() {
+  const selected = Object.entries(selectedLinksDomains.value)
+    .filter(([_, v]) => v)
+    .map(([k, _]) => k)
+  
+  if (selected.length === 0) {
+    showWarning('Выберите домены для скачивания')
+    return
+  }
+  
+  showConfirm('Скачать выбранные?', `Скачать ${selected.length} доменов?`, async () => {
+    for (const domainName of selected) {
+      try {
+        await downloadManager.value.addDownload(domainName, `https://${domainName}`)
+      } catch (err) {
+        console.error(`Error downloading ${domainName}:`, err)
+      }
+    }
+    showSuccess(`Запущено скачивание ${selected.length} доменов`)
+    selectedLinksDomains.value = {}
+  })
+}
+
+function addSelectedToDownloadList() {
+  const selected = Object.entries(selectedLinksDomains.value)
+    .filter(([_, v]) => v)
+    .map(([k, _]) => k)
+  
+  showInfo(`${selected.length} доменов добавлено в список (функция в разработке)`)
+}
+
+async function downloadSinglePage(page) {
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/download-page`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: page.url })
+    })
+    if (data.status === 'downloaded') {
+      page.is_downloaded = true
+      showSuccess(`Страница скачана: ${page.path}`)
+    } else if (data.status === 'skipped') {
+      page.is_downloaded = true
+      showInfo(`Страница уже существует: ${page.path}`)
+    } else {
+      showError(`Не удалось скачать: ${data.error || 'Неизвестная ошибка'}`)
+    }
+  } catch (err) {
+    showError('Ошибка: ' + err.message)
+  }
+}
+
+async function redownloadSinglePage(page) {
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/download-page`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: page.url, force: true })
+    })
+    if (data.status === 'downloaded') {
+      showSuccess(`Страница перекачана: ${page.path}`)
+    } else {
+      showError(`Не удалось перекачать: ${data.error || 'Неизвестная ошибка'}`)
+    }
+  } catch (err) {
+    showError('Ошибка: ' + err.message)
+  }
+}
+
+async function downloadAllRequired() {
+  const required = requiredNotDownloaded.value
+  if (required.length === 0) {
+    showInfo('Все обязательные домены уже скачаны')
+    return
+  }
+  
+  showConfirm('Скачать обязательные?', `Скачать ${required.length} обязательных доменов?`, async () => {
+    let downloaded = 0
+    for (const domain of required) {
+      try {
+        await downloadManager.value.addDownload(domain.domain, `https://${domain.domain}`)
+        downloaded++
+      } catch (err) {
+        console.error(`Error downloading ${domain.domain}:`, err)
+      }
+    }
+    showSuccess(`Запущено скачивание ${downloaded} обязательных доменов`)
+  })
+}
+
+async function runDynamicScan() {
+  dynamicScanLoading.value = true
+  dynamicScanResult.value = null
+  
+  try {
+    const url = siteData.value.url || `https://${siteData.value.domain || folderName.value}`
+    const data = await fetchJson(`/api/downloads/${folderName.value}/scan-dynamic`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, timeout: 30 })
+    })
+    
+    dynamicScanResult.value = data
+    
+    if (data.downloaded > 0) {
+      showSuccess(`Докачано ${data.downloaded} файлов из ${data.captured_total || 0} запросов`)
+    } else if (data.captured_total > 0) {
+      showInfo(`Все ${data.captured_total} ресурсов уже скачаны`)
+    } else {
+      showWarning('Не удалось перехватить сетевые запросы. Возможно Puppeteer не установлен.')
+    }
+  } catch (err) {
+    console.error('Dynamic scan error:', err)
+    showError('Ошибка сканирования: ' + err.message)
+  } finally {
+    dynamicScanLoading.value = false
+  }
+}
+
+// ============ Page Checker Functions ============
+
+async function checkLocalLinks() {
+  pageCheckLoading.value = true
+  pageCheckResult.value = null
+  
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/check-local-links`)
+    pageCheckResult.value = data
+    
+    if (data.total_broken > 0) {
+      showWarning(`Найдено ${data.total_broken} битых ссылок`)
+    } else {
+      showSuccess('Все локальные ссылки в порядке')
+    }
+  } catch (err) {
+    showError('Ошибка проверки: ' + err.message)
+  } finally {
+    pageCheckLoading.value = false
+  }
+}
+
+async function checkPagesOnline() {
+  pageCheckOnlineLoading.value = true
+  pageCheckOnlineResult.value = null
+  
+  try {
+    const url = siteData.value.url || `https://${siteData.value.domain || folderName.value}`
+    const data = await fetchJson(`/api/downloads/${folderName.value}/check-all-internal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, max_pages: 50 })
+    })
+    
+    pageCheckOnlineResult.value = data
+    
+    if (data.errors > 0) {
+      showWarning(`Найдено ${data.errors} ошибок из ${data.total} проверенных страниц`)
+    } else {
+      showSuccess(`Все ${data.total} страниц работают`)
+    }
+  } catch (err) {
+    showError('Ошибка проверки: ' + err.message)
+  } finally {
+    pageCheckOnlineLoading.value = false
+  }
+}
+
+async function fixBrokenLinks() {
+  if (!pageCheckOnlineResult.value) {
+    showWarning('Сначала выполните онлайн проверку')
+    return
+  }
+  
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/fix-broken-links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ check_results: pageCheckOnlineResult.value })
+    })
+    
+    if (data.total_fixes > 0) {
+      showSuccess(`Исправлено ${data.total_fixes} ссылок`)
+      // Refresh check
+      checkPagesOnline()
+    } else {
+      showInfo('Нет ссылок для автоматического исправления')
+    }
+  } catch (err) {
+    showError('Ошибка исправления: ' + err.message)
+  }
+}
+
+async function downloadWorkingPages() {
+  if (!pageCheckOnlineResult.value) {
+    showWarning('Сначала выполните онлайн проверку')
+    return
+  }
+  
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/download-working-pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ check_results: pageCheckOnlineResult.value, max_download: 20 })
+    })
+    
+    if (data.downloaded > 0) {
+      showSuccess(`Докачано ${data.downloaded} страниц`)
+    } else {
+      showInfo('Нет страниц для докачки')
+    }
+  } catch (err) {
+    showError('Ошибка докачки: ' + err.message)
+  }
+}
+
+function getStatusClass(statusCode) {
+  if (statusCode >= 200 && statusCode < 300) return 'bg-green-100 text-green-800'
+  if (statusCode >= 300 && statusCode < 400) return 'bg-yellow-100 text-yellow-800'
+  if (statusCode >= 400 && statusCode < 500) return 'bg-red-100 text-red-800'
+  if (statusCode >= 500) return 'bg-purple-100 text-purple-800'
+  return 'bg-gray-100 text-gray-800'
+}
+
+function getTypeIcon(type) {
+  switch (type) {
+    case 'page': return 'fas fa-file-alt text-blue-500'
+    case 'script': return 'fas fa-code text-yellow-500'
+    case 'style': return 'fas fa-palette text-purple-500'
+    case 'image': return 'fas fa-image text-green-500'
+    case 'font': return 'fas fa-font text-gray-500'
+    case 'media': return 'fas fa-video text-red-500'
+    case 'data': return 'fas fa-database text-cyan-500'
+    default: return 'fas fa-file text-gray-400'
+  }
+}
+
+// ============ End Links Analysis Tab ============
 
 async function loadTrackers() {
   trackersLoading.value = true
