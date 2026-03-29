@@ -9,10 +9,30 @@ const EXCLUDE_DIRS = ['vue-app', 'node_modules', '_wcloner', '.git', '_site']
 // Site content is in project root (wget creates domain folders like eagles.com/, shop.eagles.com/)
 const PROJECT_DIR = path.resolve(__dirname, '..')
 
+// Рекурсивно найти первый index.html в папке
+function findFirstIndexHtml(dir, maxDepth = 5, currentDepth = 0) {
+  if (currentDepth > maxDepth) return null
+  try {
+    const indexPath = path.join(dir, 'index.html')
+    if (fs.existsSync(indexPath) && fs.statSync(indexPath).isFile()) return indexPath
+    const items = fs.readdirSync(dir)
+    for (const item of items) {
+      if (item.startsWith('.') || item === 'node_modules' || item === '_next') continue
+      const itemPath = path.join(dir, item)
+      if (fs.statSync(itemPath).isDirectory()) {
+        const found = findFirstIndexHtml(itemPath, maxDepth, currentDepth + 1)
+        if (found) return found
+      }
+    }
+  } catch (e) {}
+  return null
+}
+
 // Detect domain folders once at startup
 function detectDomains() {
   const domains = []
   let mainDomain = null
+  let mainIndexPath = null
   const items = fs.readdirSync(PROJECT_DIR)
   for (const item of items) {
     if (EXCLUDE_DIRS.includes(item)) continue
@@ -20,16 +40,20 @@ function detectDomains() {
     try {
       if (fs.statSync(itemPath).isDirectory() && item.includes('.')) {
         domains.push(item)
-        if (!mainDomain && fs.existsSync(path.join(itemPath, 'index.html'))) {
-          mainDomain = item
+        if (!mainDomain) {
+          const indexFile = findFirstIndexHtml(itemPath)
+          if (indexFile) {
+            mainDomain = item
+            mainIndexPath = path.relative(itemPath, indexFile)
+          }
         }
       }
     } catch (e) {}
   }
-  return { domains, mainDomain }
+  return { domains, mainDomain, mainIndexPath }
 }
 
-const { domains, mainDomain } = detectDomains()
+const { domains, mainDomain, mainIndexPath } = detectDomains()
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -225,10 +249,16 @@ export default defineConfig({
           const queryIndex = urlPath.indexOf('?')
           const basePath = queryIndex > -1 ? urlPath.substring(0, queryIndex) : urlPath
 
-          // Default to index.html in main domain folder
+          // Default to index.html in main domain folder (учитываем вложенные пути)
           let resolvedPath = basePath
           if (basePath === '/' || basePath === '') {
-            resolvedPath = mainDomain ? `/${mainDomain}/index.html` : '/index.html'
+            if (mainDomain && mainIndexPath) {
+              resolvedPath = `/${mainDomain}/${mainIndexPath}`
+            } else if (mainDomain) {
+              resolvedPath = `/${mainDomain}/index.html`
+            } else {
+              resolvedPath = '/index.html'
+            }
           }
 
           // If path starts with a domain folder, use it directly

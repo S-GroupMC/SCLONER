@@ -15,10 +15,34 @@ const PROJECT_DIR = __dirname;
 // Directories to exclude from serving
 const EXCLUDE_DIRS = new Set(['vue-app', 'node_modules', '_wcloner', '.git']);
 
+// Рекурсивно найти первый index.html в папке
+function findFirstIndexHtml(dir, maxDepth = 5, currentDepth = 0) {
+  if (currentDepth > maxDepth) return null;
+  try {
+    // Сначала проверяем index.html в текущей папке
+    const indexPath = path.join(dir, 'index.html');
+    if (fs.existsSync(indexPath) && fs.statSync(indexPath).isFile()) {
+      return indexPath;
+    }
+    // Иначе ищем в подпапках
+    const items = fs.readdirSync(dir);
+    for (const item of items) {
+      if (item.startsWith('.') || item === 'node_modules' || item === '_next') continue;
+      const itemPath = path.join(dir, item);
+      if (fs.statSync(itemPath).isDirectory()) {
+        const found = findFirstIndexHtml(itemPath, maxDepth, currentDepth + 1);
+        if (found) return found;
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
 // Find all domain folders and detect main domain
 function detectDomains() {
   const domains = [];
   let mainDomain = null;
+  let mainIndexPath = null;
   
   const items = fs.readdirSync(PROJECT_DIR);
   for (const item of items) {
@@ -27,21 +51,27 @@ function detectDomains() {
     try {
       if (fs.statSync(itemPath).isDirectory() && item.includes('.')) {
         domains.push(item);
-        if (!mainDomain && fs.existsSync(path.join(itemPath, 'index.html'))) {
-          mainDomain = item;
+        if (!mainDomain) {
+          const indexFile = findFirstIndexHtml(itemPath);
+          if (indexFile) {
+            mainDomain = item;
+            // Сохраняем относительный путь от папки домена до index.html
+            mainIndexPath = path.relative(itemPath, indexFile);
+          }
         }
       }
     } catch (e) {}
   }
   
-  return { domains, mainDomain };
+  return { domains, mainDomain, mainIndexPath };
 }
 
-const { domains, mainDomain } = detectDomains();
+const { domains, mainDomain, mainIndexPath } = detectDomains();
 
 console.log(`[WCLoner Backend] Project: ${PROJECT_DIR}`);
 console.log(`[WCLoner Backend] Domains: ${domains.join(', ') || 'none'}`);
 console.log(`[WCLoner Backend] Main: ${mainDomain || 'unknown'}`);
+console.log(`[WCLoner Backend] Index: ${mainIndexPath || 'not found'}`);
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -185,9 +215,15 @@ const server = http.createServer((req, res) => {
     return;
   }
   
-  // Default to main domain index.html
+  // Default to main domain index.html (учитываем вложенные пути типа /ko/main/index.html)
   if (urlPath === '/' || urlPath === '') {
-    urlPath = mainDomain ? `/${mainDomain}/index.html` : '/index.html';
+    if (mainDomain && mainIndexPath) {
+      urlPath = `/${mainDomain}/${mainIndexPath}`;
+    } else if (mainDomain) {
+      urlPath = `/${mainDomain}/index.html`;
+    } else {
+      urlPath = '/index.html';
+    }
   }
   
   const filePath = findFile(urlPath);

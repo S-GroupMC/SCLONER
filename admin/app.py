@@ -330,6 +330,23 @@ async def get_landings():
             if job_id and job_id in jobs:
                 job = jobs[job_id]
                 status = job.status
+            elif job_id and status == 'downloading':
+                # Job не в памяти, но статус "downloading" — проверяем лог-файл
+                log_file = folder / '_wcloner' / f'wget_{job_id}.log'
+                if log_file.exists():
+                    # Лог существует — скачивание завершено (успешно или с ошибкой)
+                    # Проверяем количество файлов для определения успеха
+                    if stats['total_files'] > 0:
+                        status = 'completed'
+                        # Обновляем landing.json
+                        try:
+                            landing_meta['status'] = 'completed'
+                            with open(meta_path, 'w') as f:
+                                json.dump(landing_meta, f, indent=2)
+                        except:
+                            pass
+                    else:
+                        status = 'failed'
         
         folder_data = {
             'folder_name': folder.name,

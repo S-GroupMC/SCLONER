@@ -147,30 +147,89 @@ def sync_templates(folder_path):
     return synced
 
 
-def get_domain_ports(folder_name):
-    """Get or assign ports for a domain"""
+def get_all_assigned_ports():
+    """Получить все порты, уже назначенные другим лендингам"""
+    assigned = set()
+    if not DOWNLOADS_DIR.exists():
+        return assigned
+    
+    for folder in DOWNLOADS_DIR.iterdir():
+        if not folder.is_dir():
+            continue
+        ports_file = folder / '_wcloner' / 'ports.json'
+        if ports_file.exists():
+            try:
+                with open(ports_file, 'r') as f:
+                    data = json.load(f)
+                    if 'vue_port' in data:
+                        assigned.add(data['vue_port'])
+                    if 'backend_port' in data:
+                        assigned.add(data['backend_port'])
+            except:
+                pass
+    return assigned
+
+
+def get_domain_ports(folder_name, force_reassign=False):
+    """Get or assign unique ports for a domain"""
     ports_file = DOWNLOADS_DIR / folder_name / '_wcloner' / 'ports.json'
     
-    if ports_file.exists():
-        import json
+    # Если порты уже назначены и не требуется переназначение
+    if ports_file.exists() and not force_reassign:
         with open(ports_file, 'r') as f:
-            return json.load(f)
+            existing = json.load(f)
+        
+        # Проверяем, не конфликтуют ли порты с другими лендингами
+        all_assigned = get_all_assigned_ports()
+        # Убираем свои порты из списка для проверки
+        all_assigned.discard(existing.get('vue_port'))
+        all_assigned.discard(existing.get('backend_port'))
+        
+        vue_port = existing.get('vue_port', 3000)
+        backend_port = existing.get('backend_port', 3001)
+        
+        # Если порты не конфликтуют — возвращаем их
+        if vue_port not in all_assigned and backend_port not in all_assigned:
+            return existing
+        
+        # Иначе переназначаем
+        print(f"[WCLoner] Порты {vue_port}/{backend_port} конфликтуют, переназначаем для {folder_name}")
     
-    # Find free ports
-    vue_port = find_free_port(3000)
-    backend_port = find_free_port(vue_port + 1)
+    # Получаем все занятые порты (назначенные + реально используемые)
+    assigned_ports = get_all_assigned_ports()
+    # Убираем свои старые порты если есть
+    if ports_file.exists():
+        try:
+            with open(ports_file, 'r') as f:
+                old = json.load(f)
+                assigned_ports.discard(old.get('vue_port'))
+                assigned_ports.discard(old.get('backend_port'))
+        except:
+            pass
+    
+    # Ищем свободную пару портов начиная с 3000
+    vue_port = 3000
+    while vue_port < 65000:
+        backend_port = vue_port + 1
+        # Проверяем что оба порта не назначены другим и не используются
+        if (vue_port not in assigned_ports and 
+            backend_port not in assigned_ports and
+            not is_port_in_use(vue_port) and 
+            not is_port_in_use(backend_port)):
+            break
+        vue_port += 2  # Шаг 2 чтобы пары не пересекались
     
     ports = {
         'vue_port': vue_port,
         'backend_port': backend_port
     }
     
-    # Save ports
+    # Сохраняем порты
     ports_file.parent.mkdir(parents=True, exist_ok=True)
-    import json
     with open(ports_file, 'w') as f:
         json.dump(ports, f)
     
+    print(f"[WCLoner] Назначены порты для {folder_name}: Vue={vue_port}, Backend={backend_port}")
     return ports
 
 

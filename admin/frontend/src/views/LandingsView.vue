@@ -238,6 +238,17 @@
               
               <td class="px-4 py-3 text-right">
                 <div class="flex items-center justify-end space-x-2">
+                  <!-- Кнопки управления скачиванием (только для активных) -->
+                  <template v-if="folder.status === 'downloading' || folder.status === 'running'">
+                    <button 
+                      @click.stop="stopDownload(folder)"
+                      class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-orange-500 hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
+                      title="Остановить скачивание"
+                    >
+                      <i class="fas fa-stop mr-1"></i>
+                      Стоп
+                    </button>
+                  </template>
                   <button 
                     @click.stop="goToSiteDetails(folder.folder_name)"
                     class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
@@ -485,6 +496,22 @@ function deleteFolder(folderName) {
       }
     }
   )
+}
+
+async function stopDownload(folder) {
+  const jobId = folder.landing_meta?.download_job_id
+  if (!jobId) {
+    showAlert('Ошибка', 'Job ID не найден')
+    return
+  }
+  
+  try {
+    await fetchApi(`/api/jobs/${jobId}/stop`, { method: 'POST' })
+    showAlert('Успешно', `Скачивание ${folder.folder_name} остановлено`)
+    await refresh()
+  } catch (error) {
+    showAlert('Ошибка', 'Не удалось остановить: ' + error.message)
+  }
 }
 
 onMounted(() => {

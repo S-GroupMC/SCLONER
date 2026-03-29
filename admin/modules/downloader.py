@@ -18,28 +18,67 @@ from .config import (
 )
 
 
-# Blocked domains - analytics, tracking, ads
+# Blocked domains - analytics, tracking, ads, social media, video platforms
 BLOCKED_DOMAINS = [
+    # === ANALYTICS & TRACKING ===
     'google-analytics.com', 'googletagmanager.com', 'googlesyndication.com',
-    'doubleclick.net', 'facebook.net', 'facebook.com/tr', 'fbcdn.net',
-    'twitter.com/i/', 'analytics.twitter.com', 't.co',
-    'linkedin.com/px', 'snap.licdn.com',
+    'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
+    'mc.yandex.ru', 'metrika.yandex.ru', 'yandex.ru/metrika',
     'hotjar.com', 'mouseflow.com', 'crazyegg.com', 'luckyorange.com',
     'mixpanel.com', 'amplitude.com', 'segment.io', 'segment.com',
-    'intercom.io', 'crisp.chat', 'drift.com', 'zendesk.com',
-    'hubspot.com', 'hs-scripts.com', 'hs-analytics.net',
-    'optimizely.com', 'abtasty.com', 'vwo.com',
     'newrelic.com', 'nr-data.net', 'sentry.io',
-    'ads.', 'ad.', 'tracking.', 'pixel.', 'beacon.',
-    'mc.yandex.ru', 'metrika.yandex.ru',
-    'connect.facebook.net', 'platform.twitter.com',
-    'widgets.pinterest.com', 'assets.pinterest.com',
-    'static.ads-twitter.com', 'analytics.tiktok.com',
     'bat.bing.com', 'clarity.ms',
+    'ads.', 'ad.', 'tracking.', 'pixel.', 'beacon.',
+    
+    # === SOCIAL MEDIA (полностью блокируем) ===
+    'facebook.com', 'facebook.net', 'fbcdn.net', 'fb.com', 'fb.me',
+    'instagram.com', 'cdninstagram.com',
+    'twitter.com', 'x.com', 't.co', 'twimg.com',
+    'tiktok.com', 'tiktokcdn.com', 'musical.ly',
+    'linkedin.com', 'licdn.com',
+    'pinterest.com', 'pinimg.com',
+    'snapchat.com', 'snap.com', 'sc-cdn.net',
+    'telegram.org', 't.me', 'telegram.me',
+    'whatsapp.com', 'whatsapp.net',
+    'vk.com', 'vkontakte.ru', 'userapi.com',
+    'ok.ru', 'odnoklassniki.ru',
+    'reddit.com', 'redd.it', 'redditstatic.com',
+    'discord.com', 'discord.gg', 'discordapp.com',
+    'twitch.tv', 'twitchcdn.net',
+    'weibo.com', 'weibo.cn',
+    
+    # === VIDEO PLATFORMS ===
+    'youtube.com', 'youtu.be', 'ytimg.com', 'googlevideo.com', 'yt.be',
+    'vimeo.com', 'vimeocdn.com', 'player.vimeo.com',
+    'dailymotion.com', 'dmcdn.net',
+    'wistia.com', 'wistia.net', 'fast.wistia.net',
+    'vidyard.com', 'play.vidyard.com',
+    'brightcove.com', 'brightcove.net',
+    'jwplatform.com', 'jwpcdn.com', 'jwplayer.com',
+    'kaltura.com', 'kalturacdn.com',
+    'vzaar.com', 'sproutvideo.com',
+    
+    # === CHAT & SUPPORT WIDGETS ===
+    'intercom.io', 'intercomcdn.com',
+    'crisp.chat', 'crisp.im',
+    'drift.com', 'driftt.com',
+    'zendesk.com', 'zdassets.com',
+    'hubspot.com', 'hs-scripts.com', 'hs-analytics.net', 'hsforms.com',
+    'tawk.to', 'embed.tawk.to',
+    'livechatinc.com', 'livechat.com',
+    'freshdesk.com', 'freshchat.com',
+    
+    # === OTHER UNWANTED ===
+    'optimizely.com', 'abtasty.com', 'vwo.com',
     'onesignal.com', 'pushwoosh.com',
     'recaptcha.net', 'gstatic.com/recaptcha',
     'cookiebot.com', 'cookieconsent.', 'cookie-script.com',
-    'trustpilot.com/bootstrap', 'widget.trustpilot.com',
+    'trustpilot.com', 'widget.trustpilot.com',
+    'disqus.com', 'disquscdn.com',
+    'addthis.com', 'sharethis.com',
+    'spotify.com', 'scdn.co',  # Spotify embeds
+    'soundcloud.com', 'sndcdn.com',  # SoundCloud embeds
+    'apple.com/apple-music',  # Apple Music embeds
 ]
 
 # Reject URL patterns - useless/duplicate content per platform
@@ -59,9 +98,7 @@ REJECT_URL_PATTERNS = [
     r'/policies/',
     
     # === RESPONSIVE IMAGE DUPLICATES ===
-    # Shopify width params (keep original, reject resized)
     r'[&?]width=(240|352|480|535|600|720|832|940|1066|1200|1400|1600|1800|1920|2048|2560|3000|3200|3840)',
-    # Generic responsive image params
     r'[&?]w=(100|150|200|300|400|500|600|700|800|900|1000|1100|1200|1400|1600|1800|2000|2400|2800|3200)',
     r'[&?]size=',
     r'[&?]resize=',
@@ -88,14 +125,58 @@ REJECT_URL_PATTERNS = [
     r'\?preview_theme_id=',
     r'\?cache=',
     r'/api/2\d+/',
+    
+    # === VIDEO FILES (не качаем видео) ===
+    r'\.mp4($|\?)',
+    r'\.webm($|\?)',
+    r'\.mov($|\?)',
+    r'\.avi($|\?)',
+    r'\.mkv($|\?)',
+    r'\.flv($|\?)',
+    r'\.m4v($|\?)',
+    r'\.wmv($|\?)',
+    r'\.m3u8($|\?)',  # HLS streams
+    r'\.ts($|\?)',    # HLS segments
+    
+    # === AUDIO FILES ===
+    r'\.mp3($|\?)',
+    r'\.wav($|\?)',
+    r'\.ogg($|\?)',
+    r'\.flac($|\?)',
+    r'\.aac($|\?)',
+    r'\.m4a($|\?)',
+    
+    # === ARCHIVES ===
+    r'\.zip($|\?)',
+    r'\.rar($|\?)',
+    r'\.7z($|\?)',
+    r'\.tar($|\?)',
+    r'\.gz($|\?)',
+    
+    # === DOCUMENTS (большие файлы) ===
+    r'\.pdf($|\?)',
+    r'\.doc[x]?($|\?)',
+    r'\.xls[x]?($|\?)',
+    r'\.ppt[x]?($|\?)',
 ]
 
 # Allowed CDN patterns (only fonts and essential CSS/JS libraries)
 ALLOWED_CDN_PATTERNS = [
+    # Шрифты
     'fonts.googleapis.com', 'fonts.gstatic.com',
     'use.fontawesome.com', 'kit.fontawesome.com',
+    'use.typekit.net', 'p.typekit.net',  # Adobe Fonts
+    
+    # CSS/JS библиотеки
+    'cdn.jsdelivr.net',
+    'cdnjs.cloudflare.com',
+    'unpkg.com',
     'stackpath.bootstrapcdn.com', 'maxcdn.bootstrapcdn.com',
-    'cdn.tailwindcss.com', 'unpkg.com',
+    'cdn.tailwindcss.com',
+    
+    # Shopify CDN (для Shopify сайтов)
+    'cdn.shopify.com',
+    'fonts.shopifycdn.com',
 ]
 
 
@@ -188,15 +269,16 @@ def get_domain_filter_config(job):
 
 
 def is_domain_allowed(domain, filter_config):
-    """Check if a domain is allowed based on filter config"""
-    for blocked in filter_config['blocked_domains']:
-        if blocked in domain:
-            return False
-    
+    """Check if a domain is allowed based on filter config.
+    Сначала проверяем разрешённые домены (base, allowed, cdn),
+    потом блокированные — чтобы base domain всегда был разрешён.
+    """
+    # 1. Всегда разрешаем base domain и его поддомены
     base = filter_config['base_domain']
     if domain == base or domain.endswith(f'.{base}'):
         return True
     
+    # 2. Проверяем явно разрешённые домены
     for allowed in filter_config['allowed_domains']:
         if allowed.startswith('*.'):
             pattern = allowed[2:]
@@ -205,9 +287,19 @@ def is_domain_allowed(domain, filter_config):
         elif domain == allowed:
             return True
     
+    # 3. Проверяем разрешённые CDN
     for cdn in filter_config['allowed_cdn']:
         if domain == cdn or domain.endswith(f'.{cdn}'):
             return True
+    
+    # 4. Проверяем блокированные домены (по границам домена, НЕ подстрока)
+    for blocked in filter_config['blocked_domains']:
+        # Точное совпадение или поддомен заблокированного
+        if domain == blocked or domain.endswith(f'.{blocked}'):
+            return False
+        # Паттерны с точкой в начале (ads., tracking. и т.д.)
+        if blocked.endswith('.') and domain.startswith(blocked):
+            return False
     
     return False
 
@@ -269,15 +361,24 @@ def build_wget_command(job):
     cmd.extend(['-D', ','.join(domains_list)])
     
     # Build combined reject regex: blocked domains + platform-specific patterns
-    reject_parts = [f'.*{d}.*' for d in filter_config['blocked_domains'][:20]]
+    # Используем границы доменов чтобы t.co не блокировал ibighit.com
+    reject_parts = []
+    for d in filter_config['blocked_domains'][:30]:
+        escaped = d.replace('.', r'\.')
+        if d.endswith('.'):
+            # Паттерны типа "ads." — блокируем поддомены начинающиеся с этого
+            reject_parts.append(f'https?://{escaped}')
+        else:
+            # Полные домены — матчим только как отдельный домен
+            # ://domain.com/ или ://sub.domain.com/
+            reject_parts.append(f'https?://(.*\\.)?{escaped}(/|$)')
     reject_parts.extend(REJECT_URL_PATTERNS)
     reject_regex = '|'.join(reject_parts)
     cmd.extend(['--reject-regex', reject_regex])
     
-    # Only span hosts if explicitly enabled AND only for allowed domains
-    # By default, stay on the same domain to avoid downloading external sites
-    if opts.get('span_hosts', False):
-        cmd.append('-H')
+    # Всегда включаем span hosts чтобы качать ресурсы с CDN
+    # Фильтрация происходит через -D (domains) и --reject-regex
+    cmd.append('-H')
     
     if opts.get('no_parent', True):
         cmd.append('--no-parent')
@@ -293,9 +394,10 @@ def build_wget_command(job):
     if opts.get('random_wait', False):
         cmd.append('--random-wait')
     
-    user_agent = opts.get('user_agent', '')
-    if user_agent:
-        cmd.extend(['--user-agent', user_agent])
+    # User-Agent по умолчанию - современный Chrome чтобы сайты не блокировали
+    default_ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    user_agent = opts.get('user_agent', default_ua)
+    cmd.extend(['--user-agent', user_agent])
     
     reject = opts.get('reject', '')
     if reject:
@@ -444,16 +546,36 @@ def build_puppeteer_command(job):
     return cmd
 
 
-def update_job_stats(job):
-    """Update job statistics from output"""
+def update_job_stats(job, force=False):
+    """Update job statistics from output (throttled to avoid slowdown)"""
+    import time
+    
+    # Throttle updates - max once per 5 seconds unless forced
+    current_time = time.time()
+    if not force and hasattr(job, '_last_stats_update'):
+        if current_time - job._last_stats_update < 5:
+            return
+    job._last_stats_update = current_time
+    
     if not job.output_dir.exists():
         return
     
     try:
-        files = list(job.output_dir.rglob('*'))
-        job.files_downloaded = len([f for f in files if f.is_file()])
-        total_bytes = sum(f.stat().st_size for f in files if f.is_file())
+        # Use os.walk for better performance than rglob
+        import os
+        total_files = 0
+        total_bytes = 0
+        for root, dirs, files in os.walk(job.output_dir):
+            # Skip node_modules and other heavy dirs
+            dirs[:] = [d for d in dirs if d not in ('node_modules', '__pycache__', '.git')]
+            for f in files:
+                total_files += 1
+                try:
+                    total_bytes += os.path.getsize(os.path.join(root, f))
+                except:
+                    pass
         
+        job.files_downloaded = total_files
         from .utils import format_size
         job.total_size = format_size(total_bytes)
     except:
@@ -669,7 +791,7 @@ def run_wget_job(job_id):
         job.output_lines.append(f"[Debug] wget2 exit code: {returncode}")
         
         cleanup_external_domains(job)
-        update_job_stats(job)  # Update stats before checking
+        update_job_stats(job, force=True)  # Update stats before checking
         
         job.output_lines.append(f"[Debug] Files downloaded: {job.files_downloaded}")
         
@@ -680,7 +802,7 @@ def run_wget_job(job_id):
         else:
             job.status = 'failed'
         job.finished_at = datetime.now()
-        update_job_stats(job)
+        update_job_stats(job, force=True)
         
         # Auto-generate preview screenshot
         if job.status == 'completed':
@@ -831,7 +953,7 @@ def start_job_process(job_id):
             job.output_lines.append(f"[Process] Finished with code: {returncode}")
             
             cleanup_external_domains(job)
-            update_job_stats(job)
+            update_job_stats(job, force=True)
             
             # Determine success by return code or files downloaded
             if returncode == 0 or job.files_downloaded > 0:
