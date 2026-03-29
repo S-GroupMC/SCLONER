@@ -43,6 +43,10 @@
             <button @click="redownloadSite" class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 shadow-md hover:shadow-lg transition-all">
               <i class="fas fa-download mr-2"></i>Перекачать
             </button>
+            <button @click="startPuppeteerCrawl" :disabled="puppeteerCrawling" class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 shadow-md hover:shadow-lg transition-all disabled:opacity-50">
+              <i :class="puppeteerCrawling ? 'fas fa-spinner fa-spin' : 'fas fa-chrome'" class="mr-2"></i>
+              {{ puppeteerCrawling ? 'Качаю...' : 'Puppeteer' }}
+            </button>
             <button @click="openFolder" class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 shadow-sm hover:shadow transition-all">
               <i class="fas fa-folder-open mr-2"></i>Папка
             </button>
@@ -426,6 +430,15 @@
             <i class="fas fa-wrench"></i>
             <span>HTML Fixer</span>
             <span v-if="htmlFixerData?.total_fixes > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full" :class="activeTab === 'htmlfixer' ? 'bg-orange-100 text-orange-700' : 'bg-orange-100 text-orange-600'">{{ htmlFixerData.total_fixes }}</span>
+          </button>
+          <button 
+            @click="activeTab = 'scanner'"
+            class="px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center space-x-2"
+            :class="activeTab === 'scanner' ? 'border-cyan-600 text-cyan-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+          >
+            <i class="fas fa-search-plus"></i>
+            <span>Сканер</span>
+            <span v-if="scannerData?.issues_count > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full" :class="activeTab === 'scanner' ? 'bg-cyan-100 text-cyan-700' : 'bg-red-100 text-red-600'">{{ scannerData.issues_count }}</span>
           </button>
           <button 
             @click="activeTab = 'info'"
@@ -1381,6 +1394,170 @@
         </div>
       </div>
       
+      <!-- ТАБ: Сканер -->
+      <div v-show="activeTab === 'scanner'" class="card">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold text-gray-900 flex items-center">
+            <i class="fas fa-search-plus mr-2 text-cyan-600"></i>
+            Сканер сайта
+          </h2>
+          <div class="flex space-x-2">
+            <button 
+              v-if="scannerData?.status === 'scanning'"
+              @click="pauseScanner()"
+              class="px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 text-sm font-medium transition-all"
+            >
+              <i class="fas fa-pause mr-1"></i> Пауза
+            </button>
+            <button 
+              v-if="scannerData?.status === 'paused'"
+              @click="pauseScanner()"
+              class="px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 text-sm font-medium transition-all"
+            >
+              <i class="fas fa-play mr-1"></i> Продолжить
+            </button>
+            <button 
+              v-if="scannerData?.status === 'scanning' || scannerData?.status === 'paused'"
+              @click="stopScanner()"
+              class="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm font-medium transition-all"
+            >
+              <i class="fas fa-stop mr-1"></i> Стоп
+            </button>
+            <button 
+              @click="startScanner()"
+              :disabled="scannerData?.status === 'scanning' || scannerData?.status === 'paused'"
+              class="px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 text-sm font-medium transition-all disabled:opacity-50"
+            >
+              <i :class="scannerData?.status === 'scanning' ? 'fas fa-spinner fa-spin' : 'fas fa-search'" class="mr-2"></i>
+              {{ scannerData?.status === 'scanning' ? 'Сканирование...' : 'Сканировать' }}
+            </button>
+            <button 
+              v-if="scannerData?.status === 'done' && scannerData?.issues_count > 0"
+              @click="fixScannerIssues()"
+              :disabled="scannerFixing"
+              class="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 text-sm font-medium transition-all disabled:opacity-50"
+            >
+              <i :class="scannerFixing ? 'fas fa-spinner fa-spin' : 'fas fa-magic'" class="mr-2"></i>
+              {{ scannerFixing ? 'Исправление...' : 'Исправить всё' }}
+            </button>
+          </div>
+        </div>
+        
+        <div class="bg-cyan-50 border border-cyan-200 rounded-lg p-3 mb-4 text-sm text-cyan-800">
+          <i class="fas fa-info-circle mr-1"></i>
+          Сканер анализирует скачанный сайт: находит битые ссылки, пустые файлы, 
+          недокачанные HTML, жёсткие абсолютные URL и отсутствующие ресурсы. 
+          Найденные проблемы можно исправить автоматически.
+        </div>
+        
+        <!-- Прогрессбар -->
+        <div v-if="scannerData?.status === 'scanning' || scannerData?.status === 'paused'" class="mb-6">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm text-gray-600">
+              <i :class="scannerData.status === 'paused' ? 'fas fa-pause text-yellow-500' : 'fas fa-spinner fa-spin text-cyan-500'" class="mr-1"></i>
+              {{ scannerData.phase || 'Сканирование' }}
+            </span>
+            <span class="text-sm text-gray-500">{{ scannerData.scanned_files }} / {{ scannerData.total_files }} файлов</span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+            <div 
+              class="h-3 rounded-full transition-all duration-300"
+              :class="scannerData.status === 'paused' ? 'bg-yellow-400' : 'bg-cyan-500'"
+              :style="{ width: scannerData.progress + '%' }"
+            ></div>
+          </div>
+          <div class="flex justify-between mt-1">
+            <span class="text-xs text-gray-400">{{ scannerData.progress }}%</span>
+            <span v-if="scannerData.issues_count > 0" class="text-xs text-red-500 font-medium">
+              Найдено проблем: {{ scannerData.issues_count }}
+            </span>
+            <span class="text-xs text-gray-400">{{ scannerData.elapsed }}с</span>
+          </div>
+        </div>
+        
+        <!-- Результаты -->
+        <div v-if="scannerData?.status === 'done' || scannerData?.status === 'stopped'">
+          <!-- Статистика по категориям -->
+          <div class="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
+              <div class="text-xl font-bold" :class="scannerData.issues_count > 0 ? 'text-red-600' : 'text-green-600'">{{ scannerData.issues_count }}</div>
+              <div class="text-xs text-gray-500 mt-1">Всего проблем</div>
+            </div>
+            <div v-for="(count, cat) in scannerData.categories" :key="cat" class="bg-gray-50 rounded-lg p-3 text-center">
+              <div class="text-xl font-bold" :class="scannerCatColor(cat)">{{ count }}</div>
+              <div class="text-xs text-gray-500 mt-1">{{ scannerCatLabel(cat) }}</div>
+            </div>
+          </div>
+          
+          <!-- Успешный фикс -->
+          <div v-if="scannerData.fixed_count > 0" class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 text-sm text-green-800">
+            <i class="fas fa-check-circle mr-1"></i>
+            Исправлено {{ scannerData.fixed_count }} проблем из {{ scannerData.issues_count }}.
+          </div>
+          
+          <!-- Нет проблем -->
+          <div v-if="scannerData.issues_count === 0" class="bg-green-50 rounded-lg p-8 text-center">
+            <i class="fas fa-check-circle text-4xl text-green-500 mb-3"></i>
+            <p class="text-green-700 font-medium">Проблем не найдено!</p>
+            <p class="text-green-600 text-sm mt-1">Сайт в отличном состоянии</p>
+          </div>
+          
+          <!-- Список проблем по категориям -->
+          <div v-if="scannerData.issues_count > 0" class="space-y-4 mt-4">
+            <div v-for="(cat, catName) in scannerGroupedIssues" :key="catName">
+              <h3 class="text-sm font-semibold text-gray-700 mb-2 flex items-center">
+                <i :class="scannerCatIcon(catName)" class="mr-2"></i>
+                {{ scannerCatLabel(catName) }}
+                <span class="ml-2 px-1.5 py-0.5 text-xs rounded-full bg-gray-200 text-gray-700">{{ cat.length }}</span>
+              </h3>
+              <div class="space-y-1">
+                <div 
+                  v-for="(issue, idx) in cat.slice(0, showAllScannerIssues ? 999 : 10)" 
+                  :key="idx"
+                  class="border rounded-lg p-2.5 hover:border-cyan-300 transition-colors text-sm"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-2 min-w-0">
+                      <i class="fas fa-file text-gray-400 flex-shrink-0"></i>
+                      <span class="font-mono text-gray-700 text-xs truncate">{{ issue.file }}</span>
+                    </div>
+                    <span v-if="issue.fix_status" class="flex-shrink-0 ml-2 px-2 py-0.5 rounded-full text-xs font-bold" 
+                      :class="issue.fix_status === 'ok' ? 'bg-green-100 text-green-700' : issue.fix_status === 'error' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'">
+                      {{ issue.fix_status === 'ok' ? '✓ исправлено' : issue.fix_status === 'error' ? '✗ ошибка' : 'пропущено' }}
+                    </span>
+                  </div>
+                  <div class="mt-1 text-xs text-gray-500">{{ issue.detail }}</div>
+                </div>
+                <button 
+                  v-if="cat.length > 10 && !showAllScannerIssues"
+                  @click="showAllScannerIssues = true"
+                  class="w-full py-2 text-sm text-cyan-600 hover:text-cyan-700 font-medium"
+                >
+                  Показать все {{ cat.length }} записей...
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <div class="mt-4 text-xs text-gray-400 text-right">
+            Время сканирования: {{ scannerData.elapsed }}с
+          </div>
+        </div>
+        
+        <!-- Ошибка -->
+        <div v-if="scannerData?.status === 'error'" class="bg-red-50 rounded-lg p-4 text-center">
+          <i class="fas fa-exclamation-triangle text-3xl text-red-500 mb-2"></i>
+          <p class="text-red-700">{{ scannerData.error }}</p>
+        </div>
+        
+        <!-- Пустое состояние -->
+        <div v-if="!scannerData || scannerData?.status === 'none'" class="bg-gray-50 rounded-lg p-8 text-center text-gray-500">
+          <i class="fas fa-search-plus text-4xl mb-3"></i>
+          <p>Нажмите "Сканировать" для поиска проблем</p>
+          <p class="text-xs mt-2">Битые ссылки, пустые файлы, недокачанные HTML, абсолютные URL</p>
+        </div>
+      </div>
+      
       <!-- ТАБ: Информация -->
       <div v-show="activeTab === 'info'" class="card">
         <h2 class="text-lg font-bold text-gray-900 flex items-center mb-4">
@@ -2143,6 +2320,11 @@ const htmlFixerData = ref(null)
 const htmlFixerLoading = ref(false)
 const htmlFixerApplying = ref(false)
 const showAllFixerFiles = ref(false)
+const scannerData = ref(null)
+const scannerFixing = ref(false)
+const puppeteerCrawling = ref(false)
+const showAllScannerIssues = ref(false)
+let scannerPollTimer = null
 const fileTreeData = ref(null)
 const fileTreeLoading = ref(false)
 const expandedFolders = ref({})
@@ -2561,6 +2743,122 @@ async function applyHtmlFixes() {
   }
 }
 
+// ── Scanner methods ──────────────────────────────────────────────────
+async function startScanner() {
+  scannerData.value = null
+  showAllScannerIssues.value = false
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/scanner/scan`, { method: 'POST' })
+    scannerData.value = data
+    pollScannerProgress()
+  } catch (err) {
+    showError('Ошибка запуска сканера: ' + err.message)
+  }
+}
+
+function pollScannerProgress() {
+  if (scannerPollTimer) clearInterval(scannerPollTimer)
+  scannerPollTimer = setInterval(async () => {
+    try {
+      const data = await fetchJson(`/api/downloads/${folderName.value}/scanner/status`)
+      scannerData.value = data
+      if (data.status === 'done' || data.status === 'error' || data.status === 'stopped') {
+        clearInterval(scannerPollTimer)
+        scannerPollTimer = null
+      }
+    } catch (err) {
+      clearInterval(scannerPollTimer)
+      scannerPollTimer = null
+    }
+  }, 800)
+}
+
+async function pauseScanner() {
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/scanner/pause`, { method: 'POST' })
+    scannerData.value = data
+    if (data.status === 'scanning' && !scannerPollTimer) pollScannerProgress()
+  } catch (err) {
+    showError('Ошибка: ' + err.message)
+  }
+}
+
+async function stopScanner() {
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/scanner/stop`, { method: 'POST' })
+    scannerData.value = data
+    if (scannerPollTimer) { clearInterval(scannerPollTimer); scannerPollTimer = null }
+  } catch (err) {
+    showError('Ошибка: ' + err.message)
+  }
+}
+
+async function fixScannerIssues() {
+  scannerFixing.value = true
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/scanner/fix`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    })
+    scannerData.value = data
+    if (data.fixed_count > 0) {
+      showSuccess(`Исправлено ${data.fixed_count} проблем`)
+    }
+  } catch (err) {
+    showError('Ошибка исправления: ' + err.message)
+  } finally {
+    scannerFixing.value = false
+  }
+}
+
+const scannerGroupedIssues = computed(() => {
+  if (!scannerData.value?.issues) return {}
+  const groups = {}
+  for (const issue of scannerData.value.issues) {
+    const cat = issue.category || 'OTHER'
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(issue)
+  }
+  return groups
+})
+
+function scannerCatLabel(cat) {
+  const labels = {
+    BROKEN_LINK: 'Битые ссылки',
+    EMPTY_FILE: 'Пустые файлы',
+    TRUNCATED_HTML: 'Обрезанный HTML',
+    ABSOLUTE_URL: 'Абсолютные URL',
+    MISSING_RESOURCE: 'Отсутствующие ресурсы',
+    REDIRECT_STUB: 'Редиректы',
+  }
+  return labels[cat] || cat
+}
+
+function scannerCatColor(cat) {
+  const colors = {
+    BROKEN_LINK: 'text-red-600',
+    EMPTY_FILE: 'text-orange-600',
+    TRUNCATED_HTML: 'text-yellow-600',
+    ABSOLUTE_URL: 'text-blue-600',
+    MISSING_RESOURCE: 'text-purple-600',
+    REDIRECT_STUB: 'text-gray-500',
+  }
+  return colors[cat] || 'text-gray-600'
+}
+
+function scannerCatIcon(cat) {
+  const icons = {
+    BROKEN_LINK: 'fas fa-unlink text-red-500',
+    EMPTY_FILE: 'fas fa-file text-orange-500',
+    TRUNCATED_HTML: 'fas fa-file-alt text-yellow-500',
+    ABSOLUTE_URL: 'fas fa-globe text-blue-500',
+    MISSING_RESOURCE: 'fas fa-image text-purple-500',
+    REDIRECT_STUB: 'fas fa-directions text-gray-400',
+  }
+  return icons[cat] || 'fas fa-question-circle text-gray-400'
+}
+
 function trackerTypeColor(type) {
   const colors = {
     'Google Tag Manager': 'bg-blue-100 text-blue-700',
@@ -2781,6 +3079,35 @@ async function confirmRedownload() {
     }
   } catch (err) {
     showError(err.message)
+  }
+}
+
+async function startPuppeteerCrawl() {
+  puppeteerCrawling.value = true
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/puppeteer-crawl`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        max_pages: 200,
+        depth: 5,
+        concurrency: 3,
+        scroll: true,
+        click_more: true,
+        wait: 2500
+      })
+    })
+    if (data.id) {
+      activeJob.value = { id: data.id, progress: 0 }
+      pollJobProgress(data.id)
+      showSuccess('Puppeteer запущен — качаю JS-страницы и ассеты')
+    } else {
+      showError(data.error || 'Ошибка запуска Puppeteer')
+    }
+  } catch (err) {
+    showError('Ошибка: ' + err.message)
+  } finally {
+    puppeteerCrawling.value = false
   }
 }
 

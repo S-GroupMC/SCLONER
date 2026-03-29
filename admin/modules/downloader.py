@@ -521,14 +521,18 @@ def build_httrack_command(job):
 
 
 def build_puppeteer_command(job):
-    """Build puppeteer crawler command from job options"""
+    """Build puppeteer crawler command from job options.
+    
+    Passes the full domain filter (allowed/blocked/CDN) and reject patterns
+    so puppeteer-crawler.js applies the same rules as wget2.
+    """
     cmd = ['node', str(PUPPETEER_SCRIPT)]
     opts = job.options
     
     cmd.append(job.url)
     cmd.append(str(job.output_dir))
     
-    max_pages = opts.get('max_pages', 100)
+    max_pages = opts.get('max_pages', 200)
     cmd.append(str(max_pages))
     
     if opts.get('js_scroll', True):
@@ -540,8 +544,36 @@ def build_puppeteer_command(job):
     wait_time = opts.get('js_wait', 2000)
     cmd.append(f'--wait={wait_time}')
     
-    depth = opts.get('depth', 3)
+    depth = opts.get('depth', 5)
     cmd.append(f'--depth={depth}')
+    
+    concurrency = opts.get('concurrency', 3)
+    cmd.append(f'--concurrency={concurrency}')
+    
+    # ── Domain filter (same logic as wget2) ──────────────────────
+    filter_config = get_domain_filter_config(job)
+    
+    # Allowed domains
+    allowed = []
+    for d in filter_config['allowed_domains']:
+        allowed.append(d)
+    if allowed:
+        cmd.append(f'--allowed-domains={",".join(allowed)}')
+    
+    # Blocked domains
+    blocked = list(filter_config['blocked_domains'])
+    if blocked:
+        cmd.append(f'--blocked-domains={",".join(blocked)}')
+    
+    # Allowed CDN
+    cdn_list = list(filter_config['allowed_cdn'])
+    if cdn_list:
+        cmd.append(f'--allowed-cdn={",".join(cdn_list)}')
+    
+    # Reject URL patterns
+    reject_patterns = list(REJECT_URL_PATTERNS)
+    if reject_patterns:
+        cmd.append(f'--reject-regex={",".join(reject_patterns)}')
     
     return cmd
 

@@ -44,6 +44,12 @@ from modules.server_manager import (
     get_servers_status, start_vue_server, start_backend_server, stop_servers, stop_vue_server,
     kill_registered_servers
 )
+from modules.scanner import (
+    start_scan as scanner_start_scan,
+    get_scan as scanner_get_scan,
+    get_latest_scan as scanner_get_latest,
+    fix_issues as scanner_fix_issues
+)
 
 # FastAPI app
 app = FastAPI(title="Wget Web Admin", version="2.0")
@@ -470,6 +476,51 @@ async def restart_download(folder_name, request: Request):
     return job.to_dict()
 
 
+@app.post('/api/downloads/{folder_name}/puppeteer-crawl')
+async def puppeteer_crawl_endpoint(folder_name, request: Request):
+    """Run puppeteer crawler on an existing site to download JS-rendered pages & assets."""
+    data = await request.json() if request else {}
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    # Get URL from landing meta or construct from folder name
+    meta_path = folder_path / '_wcloner' / 'landing.json'
+    if meta_path.exists():
+        with open(meta_path, 'r') as f:
+            meta = json.load(f)
+        url = meta.get('url', f'https://{folder_name}')
+    else:
+        url = data.get('url', f'https://{folder_name}')
+    
+    max_pages = data.get('max_pages', 200)
+    depth = data.get('depth', 5)
+    concurrency = data.get('concurrency', 3)
+    
+    options = {
+        'recursive': True,
+        'depth': depth,
+        'max_pages': max_pages,
+        'concurrency': concurrency,
+        'page_requisites': True,
+        'convert_links': True,
+        'no_parent': True,
+        'include_subdomains': True,
+        'ignore_robots': True,
+        'js_scroll': data.get('scroll', True),
+        'js_click_more': data.get('click_more', True),
+        'js_wait': data.get('wait', 2500),
+    }
+    
+    job_id = str(uuid.uuid4())[:8]
+    job = WgetJob(job_id, url, options, False, folder_name, 'puppeteer')
+    jobs[job_id] = job
+    save_jobs()
+    
+    start_job_process(job_id)
+    return job.to_dict()
+
+
 # =============================================================================
 # API ENDPOINTS - Scanning
 # =============================================================================
@@ -750,6 +801,86 @@ async def fix_html_scan_endpoint(folder_name):
     
     from modules.html_fixer import fix_wget_corrupted_html
     return fix_wget_corrupted_html(folder_path, dry_run=True)
+
+
+# =============================================================================
+# API ENDPOINTS - Site Scanner & Fixer
+# =============================================================================
+
+@app.post('/api/downloads/{folder_name}/scanner/scan')
+async def scanner_scan_endpoint(folder_name):
+    """Start a background site scan."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    task = scanner_start_scan(folder_path)
+    return task.to_dict()
+
+
+@app.get('/api/downloads/{folder_name}/scanner/status')
+async def scanner_status_endpoint(folder_name):
+    """Get latest scan status / progress."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    task = scanner_get_latest(folder_path)
+    if not task:
+        return {'status': 'none'}
+    return task.to_dict()
+
+
+@app.get('/api/downloads/{folder_name}/scanner/{scan_id}')
+async def scanner_get_endpoint(folder_name, scan_id: str):
+    """Get specific scan by id."""
+    task = scanner_get_scan(scan_id)
+    if not task:
+        raise HTTPException(status_code=404, detail={'error': 'Scan not found'})
+    return task.to_dict()
+
+
+@app.post('/api/downloads/{folder_name}/scanner/pause')
+async def scanner_pause_endpoint(folder_name):
+    """Pause or resume the running scan."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    task = scanner_get_latest(folder_path)
+    if not task:
+        raise HTTPException(status_code=404, detail={'error': 'No active scan'})
+    if task.status == 'paused':
+        task.resume()
+    elif task.status == 'scanning':
+        task.pause()
+    return task.to_dict()
+
+
+@app.post('/api/downloads/{folder_name}/scanner/stop')
+async def scanner_stop_endpoint(folder_name):
+    """Stop the running scan."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    task = scanner_get_latest(folder_path)
+    if not task:
+        raise HTTPException(status_code=404, detail={'error': 'No active scan'})
+    task.stop()
+    return task.to_dict()
+
+
+@app.post('/api/downloads/{folder_name}/scanner/fix')
+async def scanner_fix_endpoint(folder_name, request: Request):
+    """Fix issues found by the scanner."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    task = scanner_get_latest(folder_path)
+    if not task:
+        raise HTTPException(status_code=404, detail={'error': 'No scan results'})
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    categories = body.get('categories', None)
+    scan_id = task.scan_id
+    result = scanner_fix_issues(scan_id, categories)
+    return result
 
 
 @app.get('/api/downloads/{folder_name}/scripts-status')
