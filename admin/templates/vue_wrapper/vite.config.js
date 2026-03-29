@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 import fs from 'fs'
+import https from 'https'
 
 // Directories to exclude from serving
 const EXCLUDE_DIRS = ['vue-app', 'node_modules', '_wcloner', '.git', '_site']
@@ -131,11 +132,109 @@ function findFile(urlPath) {
 function serveFile(filePath, res) {
   const ext = path.extname(filePath.replace(/\?.*$/, '')).toLowerCase()
   const contentType = MIME_TYPES[ext] || 'application/octet-stream'
-  const content = fs.readFileSync(filePath)
+  let content = fs.readFileSync(filePath)
+  
+  // Переписываем hardcoded доменные URL в JS файлах на относительные
+  // https://ibighit.com/api/... → /api/... (запросы пойдут через наш прокси)
+  if (mainDomain && (ext === '.js' || ext === '.mjs')) {
+    let text = content.toString('utf-8')
+    const escaped = mainDomain.replace(/\./g, '\\.')
+    const re = new RegExp('https?://' + escaped, 'g')
+    if (re.test(text)) {
+      text = text.replace(re, '')
+      content = Buffer.from(text, 'utf-8')
+    }
+  }
+  
   res.setHeader('Content-Type', contentType)
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Cache-Control', 'public, max-age=3600')
   res.end(content)
+}
+
+// === Reverse Proxy: динамический контент с оригинального сервера ===
+function proxyToOrigin(domain, req, res, overridePath, rawPrefix) {
+  const proxyPath = overridePath || req.url
+  const targetUrl = `https://${domain}${proxyPath}`
+  
+  console.log(`[Proxy] ${proxyPath} -> ${targetUrl}`)
+  
+  const parsed = new URL(targetUrl)
+  // Передаём заголовки клиента (x-access-site-seq, authorization и др.)
+  const fwdHeaders = {
+    'host': parsed.hostname,
+    'user-agent': req.headers['user-agent'] || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'accept': req.headers['accept'] || '*/*',
+    'accept-language': req.headers['accept-language'] || 'ko,en;q=0.9',
+    'referer': `https://${parsed.hostname}/`,
+    'origin': `https://${parsed.hostname}`,
+  }
+  // Пробрасываем важные заголовки от клиента
+  for (const h of ['x-access-site-seq', 'authorization', 'content-type', 'cookie']) {
+    if (req.headers[h]) fwdHeaders[h] = req.headers[h]
+  }
+  const options = {
+    hostname: parsed.hostname,
+    port: 443,
+    path: parsed.pathname + parsed.search,
+    method: req.method || 'GET',
+    headers: fwdHeaders
+  }
+  
+  const proxyReq = https.request(options, (proxyRes) => {
+    const resHeaders = {
+      'access-control-allow-origin': '*',
+    }
+    for (const h of ['content-type', 'content-length', 'cache-control', 'etag', 'last-modified']) {
+      if (proxyRes.headers[h]) resHeaders[h] = proxyRes.headers[h]
+    }
+    if (proxyRes.headers['location']) {
+      let loc = proxyRes.headers['location']
+        .replace(new RegExp(`https?://${domain.replace(/\./g, '\\.')}`, 'g'), '')
+      // Сохраняем контекст /__raw при редиректах из iframe
+      if (rawPrefix && loc.startsWith('/')) loc = rawPrefix + loc
+      resHeaders['location'] = loc
+    }
+    
+    // Для JS файлов: буферизуем и переписываем доменные URL на относительные
+    const proxyContentType = proxyRes.headers['content-type'] || ''
+    const isJS = proxyContentType.includes('javascript') || proxyPath.match(/\.js(\?|$)/)
+    
+    if (isJS && domain) {
+      const chunks = []
+      proxyRes.on('data', chunk => chunks.push(chunk))
+      proxyRes.on('end', () => {
+        let body = Buffer.concat(chunks).toString('utf-8')
+        const escaped = domain.replace(/\./g, '\\.')
+        body = body.replace(new RegExp('https?://' + escaped, 'g'), '')
+        const buf = Buffer.from(body, 'utf-8')
+        resHeaders['content-length'] = buf.length.toString()
+        res.writeHead(proxyRes.statusCode, resHeaders)
+        res.end(buf)
+      })
+    } else {
+      res.writeHead(proxyRes.statusCode, resHeaders)
+      proxyRes.pipe(res)
+    }
+  })
+  
+  proxyReq.on('error', (err) => {
+    console.log(`[Proxy Error] ${err.message}`)
+    if (!res.headersSent) {
+      res.statusCode = 502
+      res.end('Proxy Error')
+    }
+  })
+  
+  proxyReq.setTimeout(15000, () => {
+    proxyReq.destroy()
+    if (!res.headersSent) {
+      res.statusCode = 504
+      res.end('Proxy Timeout')
+    }
+  })
+  
+  req.pipe(proxyReq)
 }
 
 export default defineConfig({
@@ -144,6 +243,68 @@ export default defineConfig({
     {
       name: 'serve-site',
       configureServer(server) {
+        // Middleware: Reverse proxy для динамического контента (API, изображения, страницы)
+        server.middlewares.use((req, res, next) => {
+          const urlPath = decodeURIComponent(req.url || '/')
+          const basePath = urlPath.split('?')[0]
+          
+          // Skip Vite/Vue internal paths
+          if (basePath === '/' || basePath.startsWith('/@') || basePath.startsWith('/src/') ||
+              basePath.startsWith('/node_modules/') || basePath.startsWith('/__')) {
+            return next()
+          }
+          
+          // API cache: отдаём закешированные API ответы из api-cache/
+          if (basePath.startsWith('/api/')) {
+            const apiCacheDir = path.join(PROJECT_DIR, 'api-cache')
+            if (fs.existsSync(apiCacheDir)) {
+              const indexPath = path.join(apiCacheDir, '_index.json')
+              if (fs.existsSync(indexPath)) {
+                try {
+                  const index = JSON.parse(fs.readFileSync(indexPath, 'utf-8'))
+                  const apiPath = urlPath.startsWith('/') ? urlPath : '/' + urlPath
+                  const cacheFile = index[apiPath]
+                  if (cacheFile) {
+                    const cached = JSON.parse(fs.readFileSync(path.join(apiCacheDir, cacheFile), 'utf-8'))
+                    const body = typeof cached.body === 'string' ? cached.body : JSON.stringify(cached.body)
+                    res.setHeader('Content-Type', cached.contentType || 'application/json')
+                    res.setHeader('Access-Control-Allow-Origin', '*')
+                    res.setHeader('Cache-Control', 'public, max-age=3600')
+                    res.statusCode = cached.status || 200
+                    res.end(body)
+                    console.log(`[API Cache] ${apiPath}`)
+                    return
+                  }
+                } catch (e) {
+                  console.log(`[API Cache Error] ${e.message}`)
+                }
+              }
+            }
+            // Fallback: проксируем к origin если нет в кеше
+            if (mainDomain) {
+              proxyToOrigin(mainDomain, req, res)
+              return
+            }
+          }
+          
+          // /public/ и /unpublished/ пути: проксируем (нет локальных файлов)
+          if (mainDomain && (basePath.startsWith('/public/') || basePath.startsWith('/unpublished/'))) {
+            proxyToOrigin(mainDomain, req, res)
+            return
+          }
+          
+          // _next/ пути: проксируем если файл не найден локально (недоскачанные чанки, изображения, данные)
+          if (mainDomain && basePath.startsWith('/_next/')) {
+            const localFile = findFile(basePath)
+            if (!localFile) {
+              proxyToOrigin(mainDomain, req, res)
+              return
+            }
+          }
+          
+          next()
+        })
+        
         // Middleware: Block Shopify tracking/analytics endpoints (return empty JS)
         server.middlewares.use((req, res, next) => {
           const urlPath = decodeURIComponent(req.url || '/').split('?')[0]
@@ -193,7 +354,7 @@ export default defineConfig({
           const referer = req.headers.referer || ''
           const isFromIframe = referer.includes('/__raw')
 
-          // For HTML page paths (no ext or .html): if file exists, serve via redirect
+          // For HTML page paths (no ext or .html): redirect to Vue wrapper
           if (!ext || ext === '.html') {
             const filePath = findFile(urlPath)
             if (filePath && filePath.endsWith('.html')) {
@@ -203,11 +364,27 @@ export default defineConfig({
                 return
               } else {
                 // Top-level navigation - redirect to Vue wrapper
-                const pagePath = urlPath.replace(/^\//, '').replace(/\.html$/, '') + '.html'
+                const pagePath = urlPath.replace(/^\//, '')
                 res.writeHead(302, { Location: '/?page=' + encodeURIComponent(pagePath) })
                 res.end()
                 return
               }
+            } else if (isFromIframe) {
+              // Из iframe — навигация ушла из /__raw контекста
+              // Перенаправляем обратно через parent postMessage
+              const pagePath = urlPath.replace(/^\//, '')
+              const escaped = pagePath.replace(/'/g, "\\'").replace(/</g, '&lt;')
+              res.setHeader('Content-Type', 'text/html; charset=utf-8')
+              res.statusCode = 200
+              res.end(`<!DOCTYPE html><html><body><script>var p='${escaped}';if(parent!==window){parent.postMessage({type:'WCLONER_NAVIGATION',path:p},'*')}else{location.replace('/?page='+encodeURIComponent(p))}</script></body></html>`)
+              return
+            } else if (!isFromIframe) {
+              // Файл не найден локально — перенаправляем в Vue wrapper
+              // __raw обработчик проксирует страницу с оригинального сервера
+              const pagePath = urlPath.replace(/^\//, '')
+              res.writeHead(302, { Location: '/?page=' + encodeURIComponent(pagePath) })
+              res.end()
+              return
             }
           }
 
@@ -280,6 +457,9 @@ export default defineConfig({
           
           if (filePath) {
             serveFile(filePath, res)
+          } else if (mainDomain) {
+            // Файл не найден — проксируем на оригинальный сервер (сохраняем /__raw контекст)
+            proxyToOrigin(mainDomain, req, res, undefined, '/__raw')
           } else {
             res.statusCode = 404
             res.end('Not found: ' + basePath)

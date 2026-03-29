@@ -6,6 +6,7 @@
  */
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
@@ -196,6 +197,88 @@ function findFile(urlPath) {
   return null;
 }
 
+// === Reverse Proxy: динамический контент с оригинального сервера ===
+function shouldProxy(urlPath) {
+  if (!mainDomain) return false;
+  if (urlPath.endsWith('.map')) return false;
+  if (urlPath.includes('/collect') || urlPath.includes('/produce_batch')) return false;
+  return true;
+}
+
+function proxyToOrigin(req, res, urlPath) {
+  const target = new URL('https://' + mainDomain + urlPath);
+  
+  console.log('[Proxy] ' + urlPath + ' -> https://' + mainDomain + urlPath);
+  
+  // Передаём заголовки клиента (x-access-site-seq, authorization и др.)
+  var fwdHeaders = {
+    'host': target.hostname,
+    'user-agent': req.headers['user-agent'] || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'accept': req.headers['accept'] || '*/*',
+    'accept-language': req.headers['accept-language'] || 'ko,en;q=0.9',
+    'referer': 'https://' + target.hostname + '/',
+    'origin': 'https://' + target.hostname,
+  };
+  ['x-access-site-seq', 'authorization', 'content-type', 'cookie'].forEach(function(h) {
+    if (req.headers[h]) fwdHeaders[h] = req.headers[h];
+  });
+  const options = {
+    hostname: target.hostname,
+    port: 443,
+    path: target.pathname + target.search,
+    method: req.method || 'GET',
+    headers: fwdHeaders
+  };
+  
+  const proxyReq = https.request(options, function(proxyRes) {
+    const resHeaders = {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+    };
+    ['content-type', 'content-length', 'cache-control', 'etag', 'last-modified'].forEach(function(h) {
+      if (proxyRes.headers[h]) resHeaders[h] = proxyRes.headers[h];
+    });
+    if (proxyRes.headers['location']) {
+      resHeaders['location'] = proxyRes.headers['location']
+        .replace(new RegExp('https?://' + mainDomain.replace(/\./g, '\\.'), 'g'), '');
+    }
+    
+    // Для JS файлов: буферизуем и переписываем доменные URL на относительные
+    var pct = proxyRes.headers['content-type'] || '';
+    var isJS = pct.includes('javascript') || urlPath.match(/\.js(\?|$)/);
+    if (isJS) {
+      var chunks = [];
+      proxyRes.on('data', function(chunk) { chunks.push(chunk); });
+      proxyRes.on('end', function() {
+        var body = Buffer.concat(chunks).toString('utf-8');
+        var escaped = mainDomain.replace(/\./g, '\\.');
+        body = body.replace(new RegExp('https?://' + escaped, 'g'), '');
+        var buf = Buffer.from(body, 'utf-8');
+        resHeaders['content-length'] = buf.length.toString();
+        res.writeHead(proxyRes.statusCode, resHeaders);
+        res.end(buf);
+      });
+    } else {
+      res.writeHead(proxyRes.statusCode, resHeaders);
+      proxyRes.pipe(res);
+    }
+  });
+  
+  proxyReq.on('error', function(err) {
+    console.log('[Proxy Error] ' + err.message);
+    res.writeHead(502, { 'Content-Type': 'text/plain' });
+    res.end('Proxy Error');
+  });
+  
+  proxyReq.setTimeout(15000, function() {
+    proxyReq.destroy();
+    res.writeHead(504, { 'Content-Type': 'text/plain' });
+    res.end('Proxy Timeout');
+  });
+  
+  req.pipe(proxyReq);
+}
+
 const server = http.createServer((req, res) => {
   let urlPath = decodeURIComponent(req.url);
   
@@ -215,6 +298,35 @@ const server = http.createServer((req, res) => {
     return;
   }
   
+  // Сохраняем путь до перезаписи для прокси
+  const proxyUrlPath = urlPath;
+  
+  // API cache: отдаём закешированные API ответы из api-cache/
+  if (urlPath.startsWith('/api/')) {
+    const apiCacheDir = path.join(PROJECT_DIR, 'api-cache');
+    const indexPath = path.join(apiCacheDir, '_index.json');
+    if (fs.existsSync(indexPath)) {
+      try {
+        const index = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+        const cacheFile = index[urlPath];
+        if (cacheFile) {
+          const cached = JSON.parse(fs.readFileSync(path.join(apiCacheDir, cacheFile), 'utf-8'));
+          const body = typeof cached.body === 'string' ? cached.body : JSON.stringify(cached.body);
+          res.writeHead(cached.status || 200, {
+            'Content-Type': cached.contentType || 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'public, max-age=3600',
+          });
+          res.end(body);
+          console.log('[API Cache] ' + urlPath);
+          return;
+        }
+      } catch (e) {
+        console.log('[API Cache Error] ' + e.message);
+      }
+    }
+  }
+
   // Default to main domain index.html (учитываем вложенные пути типа /ko/main/index.html)
   if (urlPath === '/' || urlPath === '') {
     if (mainDomain && mainIndexPath) {
@@ -229,10 +341,12 @@ const server = http.createServer((req, res) => {
   const filePath = findFile(urlPath);
   
   if (!filePath) {
-    // Don't log noise from trackers/analytics
-    if (!urlPath.includes('collect') && !urlPath.includes('produce_batch') && !urlPath.includes('.map')) {
-      console.log(`[404] ${urlPath}`);
+    // Файл не найден — проксируем на оригинальный сервер (API, изображения, динамический контент)
+    if (shouldProxy(proxyUrlPath)) {
+      proxyToOrigin(req, res, proxyUrlPath);
+      return;
     }
+    console.log(`[404] ${proxyUrlPath}`);
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not Found');
     return;
@@ -252,6 +366,17 @@ const server = http.createServer((req, res) => {
         html = html.replace(re, `/${domain}/`);
       }
       content = Buffer.from(html, 'utf-8');
+    }
+    
+    // Переписываем hardcoded доменные URL в JS файлах на относительные
+    if (mainDomain && (mimeType.includes('javascript'))) {
+      let js = content.toString('utf-8');
+      const escaped = mainDomain.replace(/\./g, '\\.');
+      const re = new RegExp('https?://' + escaped, 'g');
+      if (re.test(js)) {
+        js = js.replace(re, '');
+        content = Buffer.from(js, 'utf-8');
+      }
     }
     
     res.writeHead(200, {

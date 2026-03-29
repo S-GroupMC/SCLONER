@@ -195,8 +195,21 @@ function injectTracking() {
 // Слушатель сообщений от iframe
 function handleMessage(event) {
   if (event.data && event.data.type === 'WCLONER_NAVIGATION') {
-    console.log('[WCLoner] Navigation message:', event.data.path)
-    updateBrowserUrl(event.data.path)
+    const newPath = event.data.path
+    console.log('[WCLoner] Navigation message:', newPath)
+    
+    // Обновляем iframe src на /__raw/path
+    page.value = newPath
+    iframeSrc.value = '/__raw/' + newPath
+    
+    // Обновляем URL браузера
+    const currentUrl = new URL(window.location.href)
+    if (newPath) {
+      currentUrl.searchParams.set('page', newPath)
+    } else {
+      currentUrl.searchParams.delete('page')
+    }
+    window.history.replaceState({}, '', currentUrl.toString())
   }
 }
 
