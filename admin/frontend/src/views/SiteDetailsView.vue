@@ -2831,6 +2831,10 @@ function scannerCatLabel(cat) {
     ABSOLUTE_URL: 'Абсолютные URL',
     MISSING_RESOURCE: 'Отсутствующие ресурсы',
     REDIRECT_STUB: 'Редиректы',
+    WRONG_PATH: 'Неверные пути ../domain/',
+    MISSING_EXTERNAL: 'Нескачанные домены',
+    BROKEN_CHUNK: 'Битые JS/CSS чанки',
+    ORIGIN_MISMATCH: 'Расхождения с оригиналом',
   }
   return labels[cat] || cat
 }
@@ -2843,6 +2847,10 @@ function scannerCatColor(cat) {
     ABSOLUTE_URL: 'text-blue-600',
     MISSING_RESOURCE: 'text-purple-600',
     REDIRECT_STUB: 'text-gray-500',
+    WRONG_PATH: 'text-rose-600',
+    MISSING_EXTERNAL: 'text-amber-600',
+    BROKEN_CHUNK: 'text-red-700',
+    ORIGIN_MISMATCH: 'text-indigo-600',
   }
   return colors[cat] || 'text-gray-600'
 }
@@ -2855,6 +2863,10 @@ function scannerCatIcon(cat) {
     ABSOLUTE_URL: 'fas fa-globe text-blue-500',
     MISSING_RESOURCE: 'fas fa-image text-purple-500',
     REDIRECT_STUB: 'fas fa-directions text-gray-400',
+    WRONG_PATH: 'fas fa-route text-rose-500',
+    MISSING_EXTERNAL: 'fas fa-cloud-download-alt text-amber-500',
+    BROKEN_CHUNK: 'fas fa-puzzle-piece text-red-600',
+    ORIGIN_MISMATCH: 'fas fa-exchange-alt text-indigo-500',
   }
   return icons[cat] || 'fas fa-question-circle text-gray-400'
 }

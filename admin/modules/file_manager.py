@@ -257,6 +257,34 @@ def generate_server_files(folder_path, main_domain, port=3000, with_vue=False):
         return False
 
 
+def _ensure_vue_app_complete(folder_path, domain):
+    """Проверяет и докопирует недостающие файлы vue-app (src/main.js, src/App.vue)"""
+    folder_path = Path(folder_path)
+    template_dir = Path(__file__).parent.parent / 'templates' / 'vue_wrapper'
+    
+    if not template_dir.exists():
+        return
+    
+    vue_dir = folder_path / 'vue-app'
+    if not vue_dir.exists():
+        return
+    
+    src_dir = vue_dir / 'src'
+    src_dir.mkdir(exist_ok=True)
+    
+    # Копируем недостающие файлы
+    if not (src_dir / 'main.js').exists() and (template_dir / 'main.js').exists():
+        shutil.copy(template_dir / 'main.js', src_dir / 'main.js')
+    
+    if not (src_dir / 'App.vue').exists() and (template_dir / 'App.vue').exists():
+        shutil.copy(template_dir / 'App.vue', src_dir / 'App.vue')
+    
+    # Также проверяем backend-server.js
+    if not (folder_path / 'backend-server.js').exists() and (template_dir / 'server.js').exists():
+        shutil.copy(template_dir / 'server.js', folder_path / 'backend-server.js')
+        os.chmod(folder_path / 'backend-server.js', 0o755)
+
+
 def prepare_landing_folder(url, folder_name=None):
     """Create landing folder and copy templates WITHOUT downloading"""
     from datetime import datetime
@@ -273,6 +301,9 @@ def prepare_landing_folder(url, folder_name=None):
     folder_path = DOWNLOADS_DIR / folder_name
     
     if folder_path.exists():
+        # Проверяем и докопируем недостающие файлы vue-app
+        _ensure_vue_app_complete(folder_path, domain)
+        
         # Return existing folder info
         meta_path = folder_path / '_wcloner' / 'landing.json'
         if meta_path.exists():

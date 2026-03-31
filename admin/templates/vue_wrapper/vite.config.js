@@ -85,7 +85,17 @@ const MIME_TYPES = {
 function findFile(urlPath) {
   // Strip query params for file lookup
   const queryIndex = urlPath.indexOf('?')
-  const basePath = queryIndex > -1 ? urlPath.substring(0, queryIndex) : urlPath
+  let basePath = queryIndex > -1 ? urlPath.substring(0, queryIndex) : urlPath
+  
+  // Двойное декодирование для путей типа /public%2FalbumThumbnail%2F...
+  if (basePath.includes('%2F') || basePath.includes('%2f')) {
+    try {
+      basePath = decodeURIComponent(basePath)
+    } catch (e) {}
+  }
+  
+  // Исправление дублирования языкового префикса /ko/ko/ -> /ko/
+  basePath = basePath.replace(/^\/([a-z]{2})\/\1\//, '/$1/')
   
   const normalized = path.normalize(basePath).replace(/\\/g, '/')
   if (normalized.includes('..')) return null

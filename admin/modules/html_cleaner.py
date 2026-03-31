@@ -173,32 +173,141 @@ def convert_paths_for_local_server(content: str, file_path: Path, output_dir: Pa
 def convert_domain_urls_to_local(content: str, main_domain: str, downloaded_domains: list) -> tuple:
     """
     Convert full URLs (https://domain.com/path) to local paths (/domain.com/path).
-    This is the first step - then convert_absolute_to_relative makes them relative.
+    Handles: href, src, srcset, CSS url(), meta content, og:image.
     
     Returns:
         Tuple of (modified_content, links_converted_count)
     """
     links_converted = 0
     
-    # Main domain: https://eagles.com/path → /eagles.com/path
-    for domain in [main_domain, f'www.{main_domain}'] + downloaded_domains:
+    all_domains = list(dict.fromkeys([main_domain, f'www.{main_domain}'] + downloaded_domains))
+    
+    for domain in all_domains:
         escaped = re.escape(domain)
         
-        # https://domain.com/path → /domain.com/path
+        # 1. href/src="https://domain.com/path" → href/src="/domain.com/path"
         pattern = rf'(href|src)="https?://{escaped}(/[^"]*)"'
         matches = len(re.findall(pattern, content))
         if matches:
             content = re.sub(pattern, rf'\1="/{domain}\2"', content)
             links_converted += matches
         
-        # //domain.com/path → /domain.com/path
+        # 2. href/src="//domain.com/path" → href/src="/domain.com/path"
         pattern = rf'(href|src)="//{escaped}(/[^"]*)"'
+        matches = len(re.findall(pattern, content))
+        if matches:
+            content = re.sub(pattern, rf'\1="/{domain}\2"', content)
+            links_converted += matches
+        
+        # 3. srcset="https://domain.com/img 1x, ..." — rewrite each URL in srcset
+        def rewrite_srcset(m):
+            nonlocal links_converted
+            attr_val = m.group(1)
+            parts = attr_val.split(',')
+            new_parts = []
+            for part in parts:
+                stripped = part.strip()
+                if stripped.startswith(f'https://{domain}/') or stripped.startswith(f'http://{domain}/'):
+                    stripped = re.sub(rf'^https?://{escaped}/', f'/{domain}/', stripped)
+                    links_converted += 1
+                elif stripped.startswith(f'//{domain}/'):
+                    stripped = re.sub(rf'^//{escaped}/', f'/{domain}/', stripped)
+                    links_converted += 1
+                new_parts.append(stripped)
+            return f'srcset="{", ".join(new_parts)}"'
+        
+        if f'{domain}/' in content:
+            content = re.sub(r'srcset="([^"]*' + escaped + r'[^"]*)"', rewrite_srcset, content)
+        
+        # 4. CSS url(https://domain.com/...) → url(/domain.com/...)
+        pattern = rf'url\((["\']?)https?://{escaped}(/[^)"\']*)\1\)'
+        matches = len(re.findall(pattern, content))
+        if matches:
+            content = re.sub(pattern, rf'url(\1/{domain}\2\1)', content)
+            links_converted += matches
+        
+        # 5. meta content="https://domain.com/..." (og:image, etc.)
+        pattern = rf'(content)="https?://{escaped}(/[^"]*)"'
         matches = len(re.findall(pattern, content))
         if matches:
             content = re.sub(pattern, rf'\1="/{domain}\2"', content)
             links_converted += matches
     
     return content, links_converted
+
+
+def fix_broken_attributes(content: str) -> tuple:
+    """
+    Fix broken HTML attributes:
+    - href="false" → remove href or replace with #
+    - src="false", src="undefined", src="null"
+    - Empty srcset values
+    
+    Returns:
+        Tuple of (modified_content, fix_count)
+    """
+    fixes = 0
+    
+    # href="false" / href="undefined" / href="null" → href="#"
+    for bad_val in ['false', 'undefined', 'null', 'NaN']:
+        pattern = rf'href="{bad_val}"'
+        count = content.count(pattern)
+        if count:
+            content = content.replace(pattern, 'href="#"')
+            fixes += count
+    
+    # src="false" / src="undefined" → remove src
+    for bad_val in ['false', 'undefined', 'null', 'NaN']:
+        pattern = rf'src="{bad_val}"'
+        count = content.count(pattern)
+        if count:
+            content = content.replace(pattern, '')
+            fixes += count
+    
+    return content, fixes
+
+
+def rewrite_external_images_to_local(content: str, output_dir: Path) -> tuple:
+    """
+    Rewrite external image URLs (cdn.sanity.io, etc.) to local paths
+    if the images were downloaded locally.
+    
+    https://cdn.sanity.io/images/xxx/yyy.jpg → /cdn.sanity.io/images/xxx/yyy.jpg
+    
+    Returns:
+        Tuple of (modified_content, rewrite_count)
+    """
+    rewrites = 0
+    
+    # Known external image CDNs
+    image_cdns = [
+        'cdn.sanity.io',
+        'images.ctfassets.net',
+        'images.prismic.io',
+    ]
+    
+    for cdn in image_cdns:
+        cdn_dir = output_dir / cdn
+        if not cdn_dir.exists():
+            continue
+        
+        escaped = re.escape(cdn)
+        
+        # src="https://cdn.sanity.io/..." → src="/cdn.sanity.io/..."
+        pattern = rf'(src|srcset)="https?://{escaped}(/[^"]*)"'
+        matches = re.findall(pattern, content)
+        if matches:
+            content = re.sub(pattern, rf'\1="/{cdn}\2"', content)
+            rewrites += len(matches)
+        
+        # url(https://cdn.sanity.io/...) → url(/cdn.sanity.io/...)
+        pattern = rf'url\((["\']?)https?://{escaped}(/[^)"\']*)\1\)'
+        matches = re.findall(pattern, content)
+        if matches:
+            content = re.sub(pattern, rf'url(\1/{cdn}\2\1)', content)
+            rewrites += len(matches)
+    
+    return content, rewrites
 
 
 def process_html_file(file_path: Path, output_dir: Path, main_domain: str, downloaded_domains: list) -> dict:
@@ -218,10 +327,20 @@ def process_html_file(file_path: Path, output_dir: Path, main_domain: str, downl
             content = re.sub(pattern, '', content, flags=re.IGNORECASE | re.MULTILINE)
             changes.append(f"Removed {name}")
     
+    # Step 0: Fix broken attributes (href="false", src="undefined", etc.)
+    content, broken_fixes = fix_broken_attributes(content)
+    if broken_fixes > 0:
+        changes.append(f"Fixed {broken_fixes} broken attributes")
+    
     # Step 1: Convert full URLs to local absolute paths
     content, urls_converted = convert_domain_urls_to_local(content, main_domain, downloaded_domains)
     
-    # Step 2: Convert all paths to absolute paths from domain root (for Vite server)
+    # Step 2: Rewrite external image CDN URLs to local paths
+    content, img_rewrites = rewrite_external_images_to_local(content, output_dir)
+    if img_rewrites > 0:
+        changes.append(f"Rewrote {img_rewrites} external image URLs to local")
+    
+    # Step 3: Convert all paths to absolute paths from domain root (for Vite server)
     content, paths_converted = convert_paths_for_local_server(content, file_path, output_dir, main_domain)
     
     total_links = urls_converted + paths_converted

@@ -122,8 +122,18 @@ function tryFile(filePath) {
 function findFile(urlPath) {
   // Split URL path and query
   const queryIndex = urlPath.indexOf('?');
-  const basePath = queryIndex > -1 ? urlPath.substring(0, queryIndex) : urlPath;
+  let basePath = queryIndex > -1 ? urlPath.substring(0, queryIndex) : urlPath;
   const queryString = queryIndex > -1 ? urlPath.substring(queryIndex) : '';
+  
+  // Двойное декодирование для путей типа /public%2FalbumThumbnail%2F...
+  if (basePath.includes('%2F') || basePath.includes('%2f')) {
+    try {
+      basePath = decodeURIComponent(basePath);
+    } catch (e) {}
+  }
+  
+  // Исправление дублирования языкового префикса /ko/ko/ -> /ko/
+  basePath = basePath.replace(/^\/([a-z]{2})\/\1\//, '/$1/');
   
   // Security: prevent path traversal
   const normalized = path.normalize(basePath).replace(/\\/g, '/');

@@ -177,6 +177,11 @@ ALLOWED_CDN_PATTERNS = [
     # Shopify CDN (для Shopify сайтов)
     'cdn.shopify.com',
     'fonts.shopifycdn.com',
+    
+    # CMS Image CDN (Sanity, Contentful, Prismic, etc.)
+    'cdn.sanity.io',
+    'images.ctfassets.net',
+    'images.prismic.io',
 ]
 
 

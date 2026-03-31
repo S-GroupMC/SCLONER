@@ -4,6 +4,7 @@ Wget Web Admin - Web interface for GNU Wget (FastAPI version)
 Refactored: all logic moved to modules/
 """
 
+import asyncio
 import os
 import json
 import shutil
@@ -74,7 +75,7 @@ socket_app = socketio.ASGIApp(sio, app)
 # =============================================================================
 
 @app.get('/api/jobs')
-async def get_jobs():
+def get_jobs():
     return [job.to_dict() for job in jobs.values()]
 
 
@@ -114,7 +115,7 @@ async def create_job(request: Request):
 
 
 @app.get('/api/jobs/{job_id}')
-async def get_job(job_id):
+def get_job(job_id):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail={'error': 'Job not found'})
@@ -122,7 +123,7 @@ async def get_job(job_id):
 
 
 @app.delete('/api/jobs/{job_id}')
-async def delete_job(job_id):
+def delete_job(job_id):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail={'error': 'Job not found'})
@@ -136,7 +137,7 @@ async def delete_job(job_id):
 
 
 @app.post('/api/jobs/{job_id}/stop')
-async def stop_job(job_id):
+def stop_job(job_id):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail={'error': 'Job not found'})
@@ -167,7 +168,7 @@ async def stop_job(job_id):
 
 
 @app.post('/api/jobs/{job_id}/pause')
-async def pause_job(job_id):
+def pause_job(job_id):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail={'error': 'Job not found'})
@@ -181,7 +182,7 @@ async def pause_job(job_id):
 
 
 @app.post('/api/jobs/{job_id}/resume')
-async def resume_job(job_id):
+def resume_job(job_id):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail={'error': 'Job not found'})
@@ -226,7 +227,7 @@ async def restart_job(job_id, request: Request):
 # =============================================================================
 
 @app.get('/api/downloads')
-async def list_downloads():
+def list_downloads():
     downloads = []
     
     if not DOWNLOADS_DIR.exists():
@@ -288,7 +289,7 @@ async def list_downloads():
 
 
 @app.get('/api/landings')
-async def get_landings():
+def get_landings():
     """Get landings grouped by parent domain"""
     if not DOWNLOADS_DIR.exists():
         return []
@@ -388,7 +389,7 @@ async def get_landings():
 
 
 @app.get('/api/downloads/{folder_name}')
-async def get_download_details(folder_name):
+def get_download_details(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -414,7 +415,7 @@ async def get_download_details(folder_name):
 
 
 @app.delete('/api/downloads/{folder_name}')
-async def delete_download(folder_name):
+def delete_download(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -534,7 +535,7 @@ async def scan_site(request: Request):
     if not url:
         raise HTTPException(status_code=400, detail={'error': 'URL is required'})
     
-    result = scan_site_sync(url, max_pages)
+    result = await asyncio.to_thread(scan_site_sync, url, max_pages)
     return result
 
 
@@ -558,7 +559,7 @@ async def scan_async_endpoint(request: Request):
 
 
 @app.get('/api/scan-status/{scan_id}')
-async def get_scan_status_endpoint(scan_id):
+def get_scan_status_endpoint(scan_id):
     status = get_scan_status(scan_id)
     if not status:
         raise HTTPException(status_code=404, detail={'error': 'Scan not found'})
@@ -577,7 +578,7 @@ async def prepare_landing(request: Request):
     if not url:
         raise HTTPException(status_code=400, detail={'error': 'URL is required'})
     
-    result = prepare_landing_folder(url)
+    result = await asyncio.to_thread(prepare_landing_folder, url)
     return result
 
 
@@ -648,7 +649,7 @@ async def start_download_selected(request: Request):
 
 
 @app.get('/api/landing-status/{folder_name}')
-async def get_landing_status(folder_name):
+def get_landing_status(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -678,7 +679,7 @@ async def get_landing_status(folder_name):
 # =============================================================================
 
 @app.get('/api/downloads/{folder_name}/check-changes')
-async def check_changes_endpoint(folder_name):
+def check_changes_endpoint(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -696,7 +697,7 @@ async def check_changes_endpoint(folder_name):
 
 
 @app.get('/api/downloads/{folder_name}/check-integrity')
-async def check_integrity_endpoint(folder_name):
+def check_integrity_endpoint(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -706,7 +707,7 @@ async def check_integrity_endpoint(folder_name):
 
 
 @app.post('/api/download-missing/{folder_name}')
-async def download_missing_endpoint(folder_name):
+def download_missing_endpoint(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -735,7 +736,7 @@ async def download_missing_endpoint(folder_name):
 # =============================================================================
 
 @app.get('/api/file-tree/{folder_name}')
-async def get_file_tree(folder_name):
+def get_file_tree(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -771,7 +772,7 @@ async def get_file_tree(folder_name):
 
 
 @app.get('/api/downloads/{folder_name}/trackers')
-async def scan_trackers_endpoint(folder_name):
+def scan_trackers_endpoint(folder_name):
     """Scan downloaded site for tracking scripts without removing them."""
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
@@ -782,7 +783,7 @@ async def scan_trackers_endpoint(folder_name):
 
 
 @app.post('/api/downloads/{folder_name}/fix-html')
-async def fix_html_endpoint(folder_name):
+def fix_html_endpoint(folder_name):
     """Fix wget2 -k HTML corruption: removes URLs inserted inside words/attributes."""
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
@@ -793,7 +794,7 @@ async def fix_html_endpoint(folder_name):
 
 
 @app.post('/api/downloads/{folder_name}/fix-html-scan')
-async def fix_html_scan_endpoint(folder_name):
+def fix_html_scan_endpoint(folder_name):
     """Dry-run scan: show what would be fixed without modifying files."""
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
@@ -808,7 +809,7 @@ async def fix_html_scan_endpoint(folder_name):
 # =============================================================================
 
 @app.post('/api/downloads/{folder_name}/scanner/scan')
-async def scanner_scan_endpoint(folder_name):
+def scanner_scan_endpoint(folder_name):
     """Start a background site scan."""
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
@@ -818,7 +819,7 @@ async def scanner_scan_endpoint(folder_name):
 
 
 @app.get('/api/downloads/{folder_name}/scanner/status')
-async def scanner_status_endpoint(folder_name):
+def scanner_status_endpoint(folder_name):
     """Get latest scan status / progress."""
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
@@ -830,7 +831,7 @@ async def scanner_status_endpoint(folder_name):
 
 
 @app.get('/api/downloads/{folder_name}/scanner/{scan_id}')
-async def scanner_get_endpoint(folder_name, scan_id: str):
+def scanner_get_endpoint(folder_name, scan_id: str):
     """Get specific scan by id."""
     task = scanner_get_scan(scan_id)
     if not task:
@@ -839,7 +840,7 @@ async def scanner_get_endpoint(folder_name, scan_id: str):
 
 
 @app.post('/api/downloads/{folder_name}/scanner/pause')
-async def scanner_pause_endpoint(folder_name):
+def scanner_pause_endpoint(folder_name):
     """Pause or resume the running scan."""
     folder_path = DOWNLOADS_DIR / folder_name
     task = scanner_get_latest(folder_path)
@@ -853,7 +854,7 @@ async def scanner_pause_endpoint(folder_name):
 
 
 @app.post('/api/downloads/{folder_name}/scanner/stop')
-async def scanner_stop_endpoint(folder_name):
+def scanner_stop_endpoint(folder_name):
     """Stop the running scan."""
     folder_path = DOWNLOADS_DIR / folder_name
     task = scanner_get_latest(folder_path)
@@ -879,12 +880,12 @@ async def scanner_fix_endpoint(folder_name, request: Request):
         pass
     categories = body.get('categories', None)
     scan_id = task.scan_id
-    result = scanner_fix_issues(scan_id, categories)
+    result = await asyncio.to_thread(scanner_fix_issues, scan_id, categories)
     return result
 
 
 @app.get('/api/downloads/{folder_name}/scripts-status')
-async def get_scripts_status(folder_name):
+def get_scripts_status(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -910,12 +911,12 @@ async def get_scripts_status(folder_name):
 
 
 @app.get('/api/downloads/{folder_name}/servers-status')
-async def get_servers_status_alt(folder_name):
+def get_servers_status_alt(folder_name):
     return get_servers_status(folder_name)
 
 
 @app.get('/api/thumbnail/{folder_name}')
-async def get_thumbnail_alt(folder_name):
+def get_thumbnail_alt(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -928,7 +929,7 @@ async def get_thumbnail_alt(folder_name):
 
 
 @app.get('/api/find-index/{folder_name}')
-async def find_index(folder_name: str):
+def find_index(folder_name: str):
     """Find the main index.html file in a downloaded site folder"""
     folder_path = DOWNLOADS_DIR / folder_name
     
@@ -951,7 +952,7 @@ async def find_index(folder_name: str):
 
 
 @app.get('/api/browse/{folder_name}/{filepath:path}')
-async def browse_file(folder_name, filepath: str):
+def browse_file(folder_name, filepath: str):
     folder_path = DOWNLOADS_DIR / folder_name
     
     # Try multiple locations
@@ -1000,12 +1001,12 @@ async def browse_file(folder_name, filepath: str):
 # =============================================================================
 
 @app.get('/api/downloads/{folder_name}/servers')
-async def get_servers_status_endpoint(folder_name):
+def get_servers_status_endpoint(folder_name):
     return get_servers_status(folder_name)
 
 
 @app.post('/api/downloads/{folder_name}/start-vue')
-async def start_vue_server_endpoint(folder_name):
+def start_vue_server_endpoint(folder_name):
     result = start_vue_server(folder_name)
     if 'error' in result:
         raise HTTPException(status_code=400, detail=result)
@@ -1013,7 +1014,7 @@ async def start_vue_server_endpoint(folder_name):
 
 
 @app.post('/api/downloads/{folder_name}/start-backend')
-async def start_backend_server_endpoint(folder_name):
+def start_backend_server_endpoint(folder_name):
     result = start_backend_server(folder_name)
     if 'error' in result:
         raise HTTPException(status_code=400, detail=result)
@@ -1021,12 +1022,12 @@ async def start_backend_server_endpoint(folder_name):
 
 
 @app.post('/api/downloads/{folder_name}/stop-servers')
-async def stop_servers_endpoint(folder_name):
+def stop_servers_endpoint(folder_name):
     return stop_servers(folder_name)
 
 
 @app.post('/api/downloads/{folder_name}/stop-vue')
-async def stop_vue_server_endpoint(folder_name):
+def stop_vue_server_endpoint(folder_name):
     """Stop only Vue server for this folder"""
     return stop_vue_server(folder_name)
 
@@ -1041,7 +1042,7 @@ async def generate_scripts_endpoint(folder_name, request: Request):
     port = data.get('port', 3000)
     vue_wrapper = data.get('vue_wrapper', True)
     
-    success = generate_vue_wrapper(folder_path, folder_name, port, port + 1)
+    success = await asyncio.to_thread(generate_vue_wrapper, folder_path, folder_name, port, port + 1)
     
     if success:
         return {'success': True, 'message': 'Scripts generated'}
@@ -1054,7 +1055,7 @@ async def generate_scripts_endpoint(folder_name, request: Request):
 # =============================================================================
 
 @app.get('/api/downloads/{folder_name}/thumbnail')
-async def get_thumbnail(folder_name):
+def get_thumbnail(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -1067,7 +1068,7 @@ async def get_thumbnail(folder_name):
 
 
 @app.post('/api/screenshot/{folder_name}')
-async def create_screenshot_endpoint(folder_name):
+def create_screenshot_endpoint(folder_name):
     folder_path = DOWNLOADS_DIR / folder_name
     if not folder_path.exists():
         raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
@@ -1085,7 +1086,7 @@ async def create_screenshot_endpoint(folder_name):
 # =============================================================================
 
 @app.get('/api/open-folder')
-async def open_folder(path: str = None, folder_name: str = None):
+def open_folder(path: str = None, folder_name: str = None):
     """Open folder in system file manager (Finder on macOS)"""
     import subprocess
     import platform
@@ -1116,7 +1117,7 @@ async def open_folder(path: str = None, folder_name: str = None):
 
 
 @app.get('/api/config')
-async def get_config():
+def get_config():
     return {
         'downloads_dir': str(DOWNLOADS_DIR),
         'wget2_path': WGET2_PATH,
@@ -1145,14 +1146,14 @@ async def save_landing_config_endpoint(request: Request):
 # =============================================================================
 
 @app.get('/')
-async def index():
+def index():
     return FileResponse(Path(__file__).parent / 'static' / 'dist' / 'index.html')
 
 
 @app.get('/landings')
 @app.get('/download')
 @app.get('/site/{path:path}')
-async def spa_routes(path: str = ''):
+def spa_routes(path: str = ''):
     return FileResponse(Path(__file__).parent / 'static' / 'dist' / 'index.html')
 
 

@@ -20,6 +20,8 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
+const https = require('https');
+const http = require('http');
 
 // ═══════════════════════════════════════════════════════════════════
 // CLI argument parsing
@@ -334,6 +336,16 @@ function setupResponseInterceptor(page) {
             const contentType = response.headers()['content-type'] || '';
             if (contentType.includes('text/html')) return;
 
+            // Skip URLs that look like pages (no extension) — they'll be saved by crawlPage
+            try {
+                const parsedUrl = new URL(url);
+                const urlExt = path.extname(parsedUrl.pathname).toLowerCase();
+                if (!urlExt && !parsedUrl.pathname.endsWith('/')) {
+                    // No extension = likely a page, not an asset. Skip to avoid duplicate without .html
+                    return;
+                }
+            } catch {}
+
             const buffer = await response.buffer().catch(() => null);
             if (!buffer || buffer.length === 0) return;
 
@@ -345,6 +357,93 @@ function setupResponseInterceptor(page) {
         } catch {
             // Response may have been aborted — ignore
         }
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Download external images referenced in page HTML (cdn.sanity.io, etc.)
+// ═══════════════════════════════════════════════════════════════════
+
+async function downloadInlineImages(page) {
+    try {
+        // Extract all image URLs from DOM (img src, picture source, css background)
+        const imageUrls = await page.evaluate(() => {
+            const urls = new Set();
+            // img[src]
+            document.querySelectorAll('img[src]').forEach(img => {
+                if (img.src && img.src.startsWith('http')) urls.add(img.src);
+            });
+            // img[data-src] (lazy loading)
+            document.querySelectorAll('img[data-src]').forEach(img => {
+                if (img.dataset.src && img.dataset.src.startsWith('http')) urls.add(img.dataset.src);
+            });
+            // source[srcset]
+            document.querySelectorAll('source[srcset]').forEach(src => {
+                (src.srcset || '').split(',').forEach(s => {
+                    const url = s.trim().split(/\s+/)[0];
+                    if (url && url.startsWith('http')) urls.add(url);
+                });
+            });
+            // img[srcset]
+            document.querySelectorAll('img[srcset]').forEach(img => {
+                (img.srcset || '').split(',').forEach(s => {
+                    const url = s.trim().split(/\s+/)[0];
+                    if (url && url.startsWith('http')) urls.add(url);
+                });
+            });
+            return [...urls];
+        });
+
+        let downloaded = 0;
+        for (const imgUrl of imageUrls) {
+            try {
+                const parsed = new URL(imgUrl);
+                const cleanUrl = imgUrl.split('?')[0];
+                if (savedAssets.has(cleanUrl)) continue;
+
+                // Skip already allowed domains (handled by response interceptor)
+                if (isDomainAllowed(parsed.hostname)) continue;
+
+                // Download external images (cdn.sanity.io, etc.)
+                const filePath = path.join(config.outputDir, parsed.hostname, decodeURIComponent(parsed.pathname));
+                if (fs.existsSync(filePath)) {
+                    savedAssets.add(cleanUrl);
+                    continue;
+                }
+
+                const buffer = await fetchUrl(imgUrl);
+                if (buffer && buffer.length > 0) {
+                    if (saveFileToDisk(filePath, buffer)) {
+                        savedAssets.add(cleanUrl);
+                        assetsDownloaded++;
+                        downloaded++;
+                    }
+                }
+            } catch {}
+        }
+        if (downloaded > 0) {
+            console.log(`  → downloaded ${downloaded} external images`);
+        }
+    } catch {}
+}
+
+function fetchUrl(url) {
+    return new Promise((resolve) => {
+        const mod = url.startsWith('https') ? https : http;
+        const req = mod.get(url, { timeout: 10000 }, (res) => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                // Follow redirect
+                fetchUrl(res.headers.location).then(resolve);
+                return;
+            }
+            if (res.statusCode !== 200) { resolve(null); return; }
+            const chunks = [];
+            res.on('data', c => chunks.push(c));
+            res.on('end', () => resolve(Buffer.concat(chunks)));
+            res.on('error', () => resolve(null));
+        });
+        req.on('error', () => resolve(null));
+        req.on('timeout', () => { req.destroy(); resolve(null); });
     });
 }
 
@@ -425,6 +524,9 @@ async function crawlPage(browser, url, depth) {
         const htmlPath = urlToFilePath(url);
         saveFileToDisk(htmlPath, Buffer.from(html, 'utf-8'));
         console.log(`  ✓ saved HTML → ${path.relative(config.outputDir, htmlPath)}`);
+
+        // Download external images referenced in HTML (cdn.sanity.io, etc.)
+        await downloadInlineImages(page);
 
         // Extract links for further crawling
         if (depth < config.depth && pagesProcessed < config.maxPages) {
