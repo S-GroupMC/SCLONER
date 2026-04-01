@@ -56,7 +56,7 @@ from modules.page_checker import (
 )
 
 # FastAPI app
-app = FastAPI(title="Wget Web Admin", version="2.0")
+app = FastAPI(title="Wget Web Admin", version="2.1.0")
 
 
 @app.on_event("startup")
