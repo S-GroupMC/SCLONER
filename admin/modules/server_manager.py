@@ -132,7 +132,7 @@ def sync_templates(folder_path):
             shutil.copy(template_server, target_server)
             synced.append('backend-server.js')
     
-    # vite.config.js
+    # vite.config.js (reads mainDomain from _wcloner/landing.json at runtime)
     vue_dir = folder_path / 'vue-app'
     template_vite = TEMPLATE_DIR / 'vite.config.js'
     target_vite = vue_dir / 'vite.config.js'
@@ -147,18 +147,62 @@ def sync_templates(folder_path):
     return synced
 
 
+BASE_PORT = 5600
+
+
+def _get_all_assigned_ports():
+    """Collect all ports already assigned to other sites from their ports.json files."""
+    used = set()
+    if not DOWNLOADS_DIR.exists():
+        return used
+    for folder in DOWNLOADS_DIR.iterdir():
+        if not folder.is_dir():
+            continue
+        pf = folder / '_wcloner' / 'ports.json'
+        if pf.exists():
+            try:
+                data = json.loads(pf.read_text())
+                if data.get('vue_port'):
+                    used.add(data['vue_port'])
+                if data.get('backend_port'):
+                    used.add(data['backend_port'])
+            except Exception:
+                pass
+    return used
+
+
 def get_domain_ports(folder_name):
-    """Get or assign ports for a domain"""
+    """Get or assign ports for a domain. Ports start from 5600, +1 for each new site."""
     ports_file = DOWNLOADS_DIR / folder_name / '_wcloner' / 'ports.json'
     
     if ports_file.exists():
-        import json
-        with open(ports_file, 'r') as f:
-            return json.load(f)
+        try:
+            data = json.loads(ports_file.read_text())
+            if data.get('vue_port') and data.get('backend_port'):
+                return data
+        except Exception:
+            pass
     
-    # Find free ports
-    vue_port = find_free_port(3000)
-    backend_port = find_free_port(vue_port + 1)
+    # Collect all ports already assigned to other sites
+    assigned = _get_all_assigned_ports()
+    
+    # Find free ports starting from BASE_PORT, skipping assigned and in-use
+    port = BASE_PORT
+    vue_port = None
+    backend_port = None
+    
+    while port < 65535:
+        if port not in assigned and not is_port_in_use(port):
+            if vue_port is None:
+                vue_port = port
+            elif backend_port is None:
+                backend_port = port
+                break
+        port += 1
+    
+    if not vue_port or not backend_port:
+        vue_port = vue_port or find_free_port(BASE_PORT)
+        backend_port = backend_port or find_free_port(vue_port + 1)
     
     ports = {
         'vue_port': vue_port,
@@ -167,9 +211,7 @@ def get_domain_ports(folder_name):
     
     # Save ports
     ports_file.parent.mkdir(parents=True, exist_ok=True)
-    import json
-    with open(ports_file, 'w') as f:
-        json.dump(ports, f)
+    ports_file.write_text(json.dumps(ports, indent=2))
     
     return ports
 
@@ -342,9 +384,10 @@ def start_vue_server(folder_name):
     
     # Step 8: Start backend server
     if backend_server_path.exists():
-        # Always kill port before starting
-        killed = kill_port(backend_port)
-        step('port_cleanup', 'ok', f'Port {backend_port} {"freed" if killed else "free"}')
+        # Check if port is occupied by another site's server
+        if is_port_in_use(backend_port):
+            step('port_conflict', 'warn', f'Port {backend_port} occupied, skipping kill to protect other servers')
+        step('port_check', 'ok', f'Backend port {backend_port}')
         
         env = os.environ.copy()
         env['PORT'] = str(backend_port)
@@ -394,9 +437,10 @@ def start_vue_server(folder_name):
         step('backend_start', 'skip', 'No backend-server.js')
     
     # Step 9: Start Vue dev server
-    # Always kill port before starting
-    killed = kill_port(vue_port)
-    step('port_cleanup_vue', 'ok', f'Port {vue_port} {"freed" if killed else "free"}')
+    # Check port availability (don't kill - may belong to another site)
+    if is_port_in_use(vue_port):
+        step('port_conflict_vue', 'warn', f'Port {vue_port} already in use')
+    step('port_check_vue', 'ok', f'Vue port {vue_port}')
     
     env = os.environ.copy()
     env['VITE_BACKEND_PORT'] = str(backend_port)
@@ -553,6 +597,81 @@ def stop_vue_server(folder_name):
     unregister_server(folder_name, 'vue')
     
     return {'status': 'stopped', 'server': 'vue'}
+
+
+def restart_vue_only(folder_name):
+    """Restart only Vue (Vite) server, do NOT touch backend Node.js server"""
+    import time
+    
+    folder_path = DOWNLOADS_DIR / folder_name
+    vue_dir = folder_path / 'vue-app'
+    
+    if not vue_dir.exists():
+        return {'error': 'Vue app not found'}
+    
+    # Get ports
+    ports = get_domain_ports(folder_name)
+    vue_port = ports['vue_port']
+    backend_port = ports['backend_port']
+    
+    # Stop only Vue process
+    servers = running_servers.get(folder_name, {})
+    vue_info = servers.get('vue')
+    if vue_info:
+        pid = vue_info.get('pid')
+        if pid:
+            try:
+                os.kill(pid, 9)
+            except (OSError, ProcessLookupError):
+                pass
+        if folder_name in running_servers and 'vue' in running_servers[folder_name]:
+            del running_servers[folder_name]['vue']
+        unregister_server(folder_name, 'vue')
+    
+    # Kill port just in case
+    kill_port(vue_port)
+    time.sleep(0.5)
+    
+    # Sync templates before restart
+    sync_templates(folder_path)
+    
+    # Start Vue only
+    env = os.environ.copy()
+    env['VITE_BACKEND_PORT'] = str(backend_port)
+    
+    try:
+        vue_process = subprocess.Popen(
+            ['npm', 'run', 'dev', '--', '--port', str(vue_port)],
+            cwd=str(vue_dir),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        if folder_name not in running_servers:
+            running_servers[folder_name] = {}
+        
+        running_servers[folder_name]['vue'] = {
+            'pid': vue_process.pid,
+            'port': vue_port,
+            'process': vue_process
+        }
+        register_server(folder_name, 'vue', vue_process.pid, vue_port)
+        
+        # Wait for Vite to start
+        for attempt in range(10):
+            time.sleep(1)
+            if is_port_in_use(vue_port):
+                break
+        
+        return {
+            'status': 'restarted',
+            'vue_port': vue_port,
+            'vue_pid': vue_process.pid,
+            'url': f'http://localhost:{vue_port}'
+        }
+    except Exception as e:
+        return {'error': f'Vue restart failed: {e}'}
 
 
 def stop_all_servers():

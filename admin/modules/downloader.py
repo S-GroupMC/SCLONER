@@ -19,27 +19,43 @@ from .config import (
 
 
 # Blocked domains - analytics, tracking, ads
+# Matched by exact domain or as suffix (.domain), never as substring
 BLOCKED_DOMAINS = [
     'google-analytics.com', 'googletagmanager.com', 'googlesyndication.com',
-    'doubleclick.net', 'facebook.net', 'facebook.com/tr', 'fbcdn.net',
-    'twitter.com/i/', 'analytics.twitter.com', 't.co',
-    'linkedin.com/px', 'snap.licdn.com',
+    'doubleclick.net', 'facebook.net', 'fbcdn.net',
+    'connect.facebook.net', 'platform.twitter.com',
+    'analytics.twitter.com', 'static.ads-twitter.com',
+    't.co',
+    'snap.licdn.com',
     'hotjar.com', 'mouseflow.com', 'crazyegg.com', 'luckyorange.com',
     'mixpanel.com', 'amplitude.com', 'segment.io', 'segment.com',
     'intercom.io', 'crisp.chat', 'drift.com', 'zendesk.com',
     'hubspot.com', 'hs-scripts.com', 'hs-analytics.net',
     'optimizely.com', 'abtasty.com', 'vwo.com',
     'newrelic.com', 'nr-data.net', 'sentry.io',
-    'ads.', 'ad.', 'tracking.', 'pixel.', 'beacon.',
     'mc.yandex.ru', 'metrika.yandex.ru',
-    'connect.facebook.net', 'platform.twitter.com',
     'widgets.pinterest.com', 'assets.pinterest.com',
-    'static.ads-twitter.com', 'analytics.tiktok.com',
+    'analytics.tiktok.com',
     'bat.bing.com', 'clarity.ms',
     'onesignal.com', 'pushwoosh.com',
-    'recaptcha.net', 'gstatic.com/recaptcha',
-    'cookiebot.com', 'cookieconsent.', 'cookie-script.com',
-    'trustpilot.com/bootstrap', 'widget.trustpilot.com',
+    'recaptcha.net',
+    'cookiebot.com', 'cookie-script.com',
+    'widget.trustpilot.com',
+]
+
+# Blocked domain prefixes - match subdomains starting with these
+# e.g. 'ads.' matches ads.example.com but NOT myads.com
+BLOCKED_DOMAIN_PREFIXES = [
+    'ads.', 'ad.', 'tracking.', 'pixel.', 'beacon.', 'cookieconsent.',
+]
+
+# Blocked URL path patterns (not domain-level, checked via reject-regex)
+BLOCKED_URL_PATHS = [
+    r'/tr[?/]',           # facebook.com/tr
+    r'/px[?/]',           # linkedin.com/px
+    r'/i/jot',            # twitter.com/i/
+    r'/recaptcha/',       # gstatic.com/recaptcha
+    r'/bootstrap/tp',     # trustpilot.com/bootstrap
 ]
 
 # Reject URL patterns - useless/duplicate content per platform
@@ -187,11 +203,27 @@ def get_domain_filter_config(job):
     }
 
 
+def is_domain_blocked(domain):
+    """Check if domain matches blocked list (exact or suffix match, never substring)"""
+    domain_lower = domain.lower()
+    for blocked in BLOCKED_DOMAINS:
+        # Exact match: t.co == t.co
+        if domain_lower == blocked:
+            return True
+        # Suffix match: analytics.t.co ends with .t.co
+        if domain_lower.endswith('.' + blocked):
+            return True
+    # Prefix match: ads.example.com starts with ads.
+    for prefix in BLOCKED_DOMAIN_PREFIXES:
+        if domain_lower.startswith(prefix):
+            return True
+    return False
+
+
 def is_domain_allowed(domain, filter_config):
     """Check if a domain is allowed based on filter config"""
-    for blocked in filter_config['blocked_domains']:
-        if blocked in domain:
-            return False
+    if is_domain_blocked(domain):
+        return False
     
     base = filter_config['base_domain']
     if domain == base or domain.endswith(f'.{base}'):
@@ -240,8 +272,10 @@ def build_wget_command(job):
     if opts.get('page_requisites', True):
         cmd.append('-p')
     
-    if opts.get('convert_links', True):
-        cmd.append('-k')
+    # -k disabled: wget2 convert-links corrupts minified HTML
+    # Links are converted by html_cleaner.py after download instead
+    # if opts.get('convert_links', True):
+    #     cmd.append('-k')
     
     if opts.get('adjust_extensions', True):
         cmd.append('-E')
@@ -268,8 +302,16 @@ def build_wget_command(job):
     
     cmd.extend(['-D', ','.join(domains_list)])
     
-    # Build combined reject regex: blocked domains + platform-specific patterns
-    reject_parts = [f'.*{d}.*' for d in filter_config['blocked_domains'][:20]]
+    # Build combined reject regex: blocked domains (with proper boundaries) + URL patterns
+    reject_parts = []
+    for d in BLOCKED_DOMAINS[:20]:
+        # Escape dots for regex, match as domain in URL: ://domain/ or ://sub.domain/
+        escaped = d.replace('.', r'\.')
+        reject_parts.append(f'(://|\\.){escaped}(/|$)')
+    for prefix in BLOCKED_DOMAIN_PREFIXES:
+        escaped = prefix.replace('.', r'\.')
+        reject_parts.append(f'://{escaped}')
+    reject_parts.extend(BLOCKED_URL_PATHS)
     reject_parts.extend(REJECT_URL_PATTERNS)
     reject_regex = '|'.join(reject_parts)
     cmd.extend(['--reject-regex', reject_regex])
@@ -377,8 +419,11 @@ def build_httrack_command(job):
     for cdn in filter_config['allowed_cdn']:
         cmd.append(f'+{cdn}/*')
     
-    for blocked in filter_config['blocked_domains']:
-        cmd.append(f'-*{blocked}*')
+    for blocked in BLOCKED_DOMAINS:
+        cmd.append(f'-*{blocked}/*')
+        cmd.append(f'-*.{blocked}/*')
+    for prefix in BLOCKED_DOMAIN_PREFIXES:
+        cmd.append(f'-*://{prefix}*')
     
     # Platform-specific reject patterns (convert regex to httrack glob)
     httrack_rejects = [
@@ -445,15 +490,30 @@ def build_puppeteer_command(job):
 
 
 def update_job_stats(job):
-    """Update job statistics from output"""
+    """Update job statistics from output - count only downloaded site content"""
     if not job.output_dir.exists():
         return
     
+    EXCLUDE_DIRS = {'vue-app', '_wcloner', 'node_modules', 'hts-cache', '.git'}
+    EXCLUDE_FILES = {'backend-server.js', 'preview.png'}
+    
     try:
-        files = list(job.output_dir.rglob('*'))
-        job.files_downloaded = len([f for f in files if f.is_file()])
-        total_bytes = sum(f.stat().st_size for f in files if f.is_file())
+        count = 0
+        total_bytes = 0
+        for f in job.output_dir.rglob('*'):
+            if not f.is_file():
+                continue
+            # Skip excluded directories
+            parts = f.relative_to(job.output_dir).parts
+            if any(p in EXCLUDE_DIRS for p in parts):
+                continue
+            # Skip excluded root-level files
+            if len(parts) == 1 and parts[0] in EXCLUDE_FILES:
+                continue
+            count += 1
+            total_bytes += f.stat().st_size
         
+        job.files_downloaded = count
         from .utils import format_size
         job.total_size = format_size(total_bytes)
     except:
@@ -566,15 +626,19 @@ def cleanup_rejected_content(job):
         )
 
 
-def cleanup_external_domains(job):
-    """Remove folders of external domains and rejected content"""
+def cleanup_external_domains(job, pre_existing_dirs=None):
+    """Remove folders of external domains and rejected content.
+    
+    Args:
+        pre_existing_dirs: set of folder names that existed BEFORE download started.
+                          These will NEVER be deleted to prevent losing previously downloaded content.
+    """
     filter_config = get_domain_filter_config(job)
     
     if not job.output_dir.exists():
         return
     
     # Получаем основной домен сайта из landing.json
-    # Это важно когда скачиваем дополнительный домен в папку основного сайта
     site_main_domain = None
     landing_json = job.output_dir / '_wcloner' / 'landing.json'
     if landing_json.exists():
@@ -586,7 +650,12 @@ def cleanup_external_domains(job):
         except:
             pass
     
+    if pre_existing_dirs is None:
+        pre_existing_dirs = set()
+    
     removed_count = 0
+    job.output_lines.append(f"[Cleanup] Main domain: {site_main_domain}, pre_existing: {pre_existing_dirs}")
+    
     for folder in job.output_dir.iterdir():
         if not folder.is_dir():
             continue
@@ -598,6 +667,12 @@ def cleanup_external_domains(job):
         
         # ВАЖНО: Никогда не удаляем папку основного домена сайта
         if site_main_domain and folder_name == site_main_domain:
+            job.output_lines.append(f"[Cleanup] KEEP main domain: {folder_name}")
+            continue
+        
+        # ВАЖНО: Никогда не удаляем папки, которые существовали до начала скачивания
+        if folder_name in pre_existing_dirs:
+            job.output_lines.append(f"[Cleanup] KEEP pre-existing: {folder_name}")
             continue
         
         if not is_domain_allowed(folder_name, filter_config):
@@ -607,9 +682,13 @@ def cleanup_external_domains(job):
                 job.output_lines.append(f"[Cleanup] Removed external: {folder_name}")
             except Exception as e:
                 job.output_lines.append(f"[Cleanup] Error removing {folder_name}: {e}")
+        else:
+            job.output_lines.append(f"[Cleanup] KEEP allowed: {folder_name}")
     
     if removed_count > 0:
         job.output_lines.append(f"[Cleanup] Removed {removed_count} external domain folders")
+    else:
+        job.output_lines.append(f"[Cleanup] Nothing removed")
     
     # Also clean up rejected content inside allowed domains
     cleanup_rejected_content(job)
@@ -623,6 +702,13 @@ def run_wget_job(job_id):
     
     job.status = 'running'
     job.started_at = datetime.now()
+    
+    # Запоминаем существующие папки ДО начала любого скачивания
+    pre_existing_dirs = set()
+    if job.output_dir.exists():
+        for item in job.output_dir.iterdir():
+            if item.is_dir():
+                pre_existing_dirs.add(item.name)
     
     # Smart mode - run all engines sequentially
     if job.engine == 'smart':
@@ -685,7 +771,7 @@ def run_wget_job(job_id):
         returncode = process.returncode
         job.output_lines.append(f"[Debug] wget2 exit code: {returncode}")
         
-        cleanup_external_domains(job)
+        cleanup_external_domains(job, pre_existing_dirs)
         update_job_stats(job)  # Update stats before checking
         
         job.output_lines.append(f"[Debug] Files downloaded: {job.files_downloaded}")
@@ -701,8 +787,22 @@ def run_wget_job(job_id):
         
         # Auto-generate preview screenshot
         if job.status == 'completed':
-            # NOTE: Автоматическая очистка HTML отключена - может повредить верстку.
-            # Используйте таб "Трекеры" для просмотра найденных трекеров.
+            # Convert links: since -k is disabled, we convert URLs ourselves
+            try:
+                from .html_cleaner import clean_downloaded_site
+                parsed = urlparse(job.url)
+                main_domain = parsed.netloc.replace('www.', '')
+                job.output_lines.append("[WCLoner] Конвертация ссылок...")
+                clean_stats = clean_downloaded_site(job.output_dir, main_domain)
+                if clean_stats.get('error'):
+                    job.output_lines.append(f"[WCLoner] Ошибка очистки: {clean_stats['error']}")
+                else:
+                    job.output_lines.append(
+                        f"[WCLoner] Ссылки сконвертированы: {clean_stats.get('links_converted', 0)} ссылок "
+                        f"в {clean_stats.get('modified_files', 0)} файлах"
+                    )
+            except Exception as e:
+                job.output_lines.append(f"[WCLoner] Ошибка конвертации ссылок: {str(e)}")
             
             try:
                 from .file_manager import generate_preview_screenshot
@@ -781,6 +881,13 @@ def start_job_process(job_id):
     job.started_at = datetime.now()
     save_jobs()
     
+    # Запоминаем существующие папки ДО скачивания, чтобы cleanup не удалил их
+    pre_existing_dirs = set()
+    if job.output_dir.exists():
+        for item in job.output_dir.iterdir():
+            if item.is_dir():
+                pre_existing_dirs.add(item.name)
+    
     # Create log file for output
     log_dir = job.output_dir / '_wcloner'
     log_dir.mkdir(exist_ok=True)
@@ -792,6 +899,11 @@ def start_job_process(job_id):
         # Quote ALL arguments to prevent shell interpretation of |, ?, (, ), *, $ etc.
         cmd_str = ' '.join(shlex.quote(c) for c in cmd)
         shell_cmd = f'{cmd_str} > "{log_file}" 2>&1'
+        
+        # DEBUG: save exact shell command for troubleshooting
+        debug_cmd_file = log_dir / f'debug_cmd_{job.id}.sh'
+        with open(debug_cmd_file, 'w') as df:
+            df.write(f'#!/bin/sh\n{shell_cmd}\n')
         
         process = subprocess.Popen(
             shell_cmd,
@@ -847,14 +959,19 @@ def start_job_process(job_id):
             returncode = process.returncode
             job.output_lines.append(f"[Process] Finished with code: {returncode}")
             
-            cleanup_external_domains(job)
+            cleanup_external_domains(job, pre_existing_dirs)
             update_job_stats(job)
             
-            # Determine success by return code or files downloaded
-            if returncode == 0 or job.files_downloaded > 0:
-                job.status = 'completed'
-            elif job.stop_requested:
+            job.output_lines.append(f"[Process] Files found: {job.files_downloaded}")
+            
+            # wget2 exit codes: 0=success, 4=network error, 8=server error (403/404)
+            # Partial success: if files were downloaded, consider completed
+            if job.stop_requested:
                 job.status = 'stopped'
+            elif returncode == 0 or job.files_downloaded > 0:
+                job.status = 'completed'
+                if returncode != 0:
+                    job.output_lines.append(f"[Process] Partial success: exit code {returncode} but {job.files_downloaded} files downloaded")
             else:
                 job.status = 'failed'
             job.finished_at = datetime.now()

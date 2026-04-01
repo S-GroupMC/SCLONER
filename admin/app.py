@@ -42,7 +42,7 @@ from modules.file_manager import (
 from modules.server_manager import (
     get_domain_ports, find_free_port, is_port_in_use, check_process_running,
     get_servers_status, start_vue_server, start_backend_server, stop_servers, stop_vue_server,
-    kill_registered_servers
+    restart_vue_only, kill_registered_servers
 )
 from modules.links_analyzer import (
     get_links_analysis, run_deep_analysis
@@ -614,7 +614,8 @@ async def scan_dynamic_content(folder_name, request: Request):
         else:
             url = f'https://{folder_name}'
     
-    result = scan_page_for_missing(url, folder_path, timeout)
+    import asyncio
+    result = await asyncio.to_thread(scan_page_for_missing, url, folder_path, timeout)
     return result
 
 
@@ -634,7 +635,8 @@ async def scan_dynamic_multiple(folder_name, request: Request):
     if not urls:
         raise HTTPException(status_code=400, detail={'error': 'URLs list is required'})
     
-    result = scan_multiple_pages(urls, folder_path, timeout)
+    import asyncio
+    result = await asyncio.to_thread(scan_multiple_pages, urls, folder_path, timeout)
     return result
 
 
@@ -1210,6 +1212,16 @@ async def stop_servers_endpoint(folder_name):
 async def stop_vue_server_endpoint(folder_name):
     """Stop only Vue server for this folder"""
     return stop_vue_server(folder_name)
+
+
+@app.post('/api/downloads/{folder_name}/restart-vue')
+async def restart_vue_endpoint(folder_name):
+    """Restart only Vue (Vite) server, backend stays running"""
+    import asyncio
+    result = await asyncio.to_thread(restart_vue_only, folder_name)
+    if 'error' in result:
+        raise HTTPException(status_code=500, detail=result)
+    return result
 
 
 @app.post('/api/downloads/{folder_name}/generate-scripts')

@@ -221,11 +221,14 @@ def process_link(link, html_file, folder_path, domains_found, pages_found, local
 
 
 def check_domain_downloaded(folder_path, domain):
-    """Проверяет скачан ли домен (есть ли папка с index.html)"""
+    """Проверяет скачан ли домен (есть ли папка с любыми файлами)"""
     domain_path = folder_path / domain
-    if domain_path.exists():
-        index_path = domain_path / 'index.html'
-        return index_path.exists()
+    if domain_path.exists() and domain_path.is_dir():
+        # Папка есть - проверяем что в ней есть хотя бы один файл
+        try:
+            return any(domain_path.rglob('*'))
+        except:
+            return True
     return False
 
 

@@ -23,7 +23,13 @@
               <i class="fas fa-arrow-left text-xl"></i>
             </router-link>
             <div>
-              <h1 class="text-2xl font-bold text-gray-900">{{ siteData.domain }}</h1>
+              <h1 class="text-2xl font-bold text-gray-900">
+                {{ siteData.domain }}
+                <span v-if="runningServers.vue" class="ml-2 inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700">
+                  <span class="w-1.5 h-1.5 bg-green-500 rounded-full mr-1 animate-pulse"></span>
+                  :{{ runningServers.vue.port }}
+                </span>
+              </h1>
               <p class="text-sm text-gray-500">{{ siteData.folder_name }}</p>
             </div>
           </div>
@@ -39,6 +45,15 @@
             </button>
             <button v-else @click="openInBrowser" class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow-md hover:shadow-lg transition-all">
               <i class="fas fa-external-link-alt mr-2"></i>Открыть
+            </button>
+            <button 
+              v-if="runningServers.vue"
+              @click="restartVueServer"
+              :disabled="restartingVue"
+              class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-yellow-700 bg-gradient-to-r from-yellow-100 to-yellow-200 hover:from-yellow-200 hover:to-yellow-300 border border-yellow-300 shadow-sm hover:shadow transition-all"
+            >
+              <i :class="restartingVue ? 'fas fa-spinner fa-spin mr-2' : 'fas fa-redo mr-2'"></i>
+              {{ restartingVue ? 'Перезапуск...' : 'Перезапустить сервер' }}
             </button>
             <button @click="redownloadSite" class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 shadow-md hover:shadow-lg transition-all">
               <i class="fas fa-download mr-2"></i>Перекачать
@@ -1577,10 +1592,18 @@
             >
               <i class="fas fa-file-alt mr-1"></i>Страницы ({{ linksAnalysisData.total_pages || 0 }})
             </button>
+            <button 
+              @click="linksFilter = 'check404'"
+              :class="linksFilter === 'check404' ? 'bg-orange-600 text-white' : 'bg-orange-50 text-orange-700 hover:bg-orange-100'"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors"
+            >
+              <i class="fas fa-exclamation-triangle mr-1"></i>Проверка 404
+              <span v-if="pageCheckResult?.total_broken > 0" class="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-red-500 text-white">{{ pageCheckResult.total_broken }}</span>
+            </button>
           </div>
           
           <!-- Список доменов -->
-          <div v-if="linksFilter !== 'pages'" class="border border-gray-200 rounded-lg overflow-hidden">
+          <div v-if="linksFilter !== 'pages' && linksFilter !== 'check404'" class="border border-gray-200 rounded-lg overflow-hidden">
             <table class="w-full text-sm">
               <thead class="bg-gray-50 border-b">
                 <tr>
@@ -1707,20 +1730,20 @@
                         <i class="fas fa-sync-alt mr-1"></i>Перекачать
                       </button>
                       <a 
-                        v-if="domain.is_downloaded && siteData?.server?.running"
+                        v-if="domain.is_downloaded && runningServers.vue"
                         :href="getLocalDomainUrl(domain.domain)"
                         target="_blank"
                         class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-white bg-purple-600 hover:bg-purple-700"
                         title="Открыть локальную копию"
                       >
-                        <i class="fas fa-hdd mr-1"></i>Локально
+                        <i class="fas fa-eye mr-1"></i>Открыть
                       </a>
                       <span 
-                        v-else-if="domain.is_downloaded && !siteData?.server?.running"
+                        v-else-if="domain.is_downloaded && !runningServers.vue"
                         class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-gray-400 bg-gray-100 cursor-not-allowed"
                         title="Запустите сервер чтобы открыть локальную копию"
                       >
-                        <i class="fas fa-hdd mr-1"></i>Локально
+                        <i class="fas fa-eye mr-1"></i>Открыть
                       </span>
                       <a 
                         :href="'https://' + domain.domain"
@@ -1731,7 +1754,6 @@
                         <i class="fas fa-external-link-alt mr-1"></i>Онлайн
                       </a>
                       <button 
-                        v-if="domain.category === 'external' || domain.category === 'tracker'"
                         @click="blockDomain(domain)"
                         class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-red-700 bg-red-100 hover:bg-red-200"
                         title="Блокировать"
@@ -1848,8 +1870,8 @@
             </div>
           </div>
           
-          <!-- Секция проверки 404 -->
-          <div class="mt-6 border-t pt-4">
+          <!-- Секция проверки 404 (суб-таб) -->
+          <div v-if="linksFilter === 'check404'">
             <div class="flex items-center justify-between mb-4">
               <h3 class="text-md font-bold text-gray-900 flex items-center">
                 <i class="fas fa-exclamation-triangle mr-2 text-orange-500"></i>
@@ -2173,6 +2195,14 @@
                 <span v-else-if="runningServers.vue" class="ml-2 text-xs text-green-600 font-normal">
                   <i class="fas fa-play-circle"></i> :{{ runningServers.vue.port }}
                 </span>
+                <button 
+                  v-if="runningServers.vue && !startingServer"
+                  @click.stop="stopCurrentServer"
+                  class="ml-2 px-1.5 py-0.5 text-xs rounded bg-red-100 hover:bg-red-200 text-red-600 transition-colors"
+                  title="Остановить сервер"
+                >
+                  <i class="fas fa-stop"></i>
+                </button>
                 <span v-else-if="scriptsStatus?.vue_wrapper?.ready" class="ml-2 text-xs text-green-600">
                   <i class="fas fa-check-circle"></i> Готово
                 </span>
@@ -2241,6 +2271,7 @@
           <div v-if="!startingServer && !serverLaunchError && serverLaunchSteps.length > 0 && serverLaunchSteps[serverLaunchSteps.length - 1]?.status === 'ok'" class="mt-3">
             <div class="p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 flex items-center">
               <i class="fas fa-check-circle mr-1"></i> Серверы запущены успешно
+              <span v-if="runningServers.vue" class="ml-1 font-semibold">:{{ runningServers.vue.port }}</span>
             </div>
             <div class="mt-2 flex gap-2">
               <button 
@@ -3410,7 +3441,7 @@ async function analyzeAndFixBrokenLinks() {
     }
     
     // Обновляем локальную проверку
-    await runLocalCheck()
+    await checkLocalLinks()
   } catch (err) {
     console.error('Error fixing broken links:', err)
     showError('Ошибка исправления: ' + err.message)
@@ -3434,15 +3465,39 @@ function getLinkTypeName(type) {
 }
 
 function getLocalDomainUrl(domainName) {
-  // Возвращает URL локальной копии домена
-  // Домен хранится в папке folderName/domainName/
-  const server = siteData.value?.server
-  if (server?.running && server?.port) {
-    return `http://localhost:${server.port}/${domainName}/`
+  // Возвращает URL локальной копии домена через Vue (Vite) сервер
+  // Если домен имеет общую базу с mainDomain - используем поддомен
+  // maxkorzh.asia -> asia.localhost:3000, maxkorzh.eu -> eu.localhost:3000
+  const vue = runningServers.value?.vue
+  const port = vue?.port || 3000
+  const main = siteData.value?.domain || folderName.value
+  
+  if (domainName === main) {
+    return `http://localhost:${port}/`
   }
-  // Если сервер не запущен, открываем через основной домен сайта
-  // или показываем путь к файлу
-  return `http://localhost:${server?.port || 3000}/${domainName}/`
+  
+  // Извлекаем базу из mainDomain: maxkorzh.live -> maxkorzh
+  const mainParts = main.split('.')
+  const mainBase = mainParts.length >= 2 ? mainParts.slice(0, -1).join('.') : null
+  
+  if (mainBase) {
+    const domParts = domainName.split('.')
+    const domBase = domParts.length >= 2 ? domParts.slice(0, -1).join('.') : null
+    
+    if (domBase === mainBase && domParts.length >= 2) {
+      // maxkorzh.asia -> asia.localhost:port
+      const sub = domParts[domParts.length - 1]
+      return `http://${sub}.localhost:${port}/`
+    }
+    if (domainName.endsWith('.' + main)) {
+      // manual.maxkorzh.live -> manual.localhost:port
+      const sub = domainName.slice(0, -(main.length + 1))
+      return `http://${sub}.localhost:${port}/`
+    }
+  }
+  
+  // Другие домены (unpkg.com и т.д.) - через прямой путь
+  return `http://localhost:${port}/${domainName}/`
 }
 
 async function downloadDomain(domain) {
@@ -4838,16 +4893,10 @@ async function restartVueServer() {
   restartingVue.value = true
   
   try {
-    // Останавливаем текущий сервер
-    await fetchApi(`/api/downloads/${folderName.value}/stop-vue`, { method: 'POST' })
+    // Перезапускаем только Vue (Vite), backend не трогаем
+    const data = await fetchJson(`/api/downloads/${folderName.value}/restart-vue`, { method: 'POST' })
     
-    // Небольшая пауза
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
-    // Запускаем заново
-    const data = await fetchJson(`/api/downloads/${folderName.value}/start-vue`, { method: 'POST' })
-    
-    if (data.status === 'started' || data.status === 'already_running') {
+    if (data.status === 'restarted') {
       runningServers.value.vue = { port: data.vue_port, pid: data.vue_pid, url: data.url }
       showToast('Vue сервер перезапущен', 'success')
     } else {
@@ -4890,6 +4939,19 @@ async function loadServersStatus() {
     }
   } catch (err) {
     console.error('Error loading servers status:', err)
+  }
+}
+
+async function stopCurrentServer() {
+  try {
+    const port = runningServers.value.vue?.port
+    await fetchApi(`/api/downloads/${folderName.value}/stop-servers`, { method: 'POST' })
+    runningServers.value = { vue: false, backend: false }
+    serverLaunchSteps.value = []
+    serverLaunchError.value = null
+    showToast(`Сервер :${port} остановлен`, 'success')
+  } catch (err) {
+    showError('Ошибка остановки: ' + err.message)
   }
 }
 

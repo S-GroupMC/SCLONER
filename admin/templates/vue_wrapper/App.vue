@@ -230,6 +230,16 @@ onUnmounted(() => {
   </div>
 </template>
 
+<style>
+html, body {
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+}
+</style>
+
 <style scoped>
 .wcloner-wrapper {
   width: 100%;
@@ -244,6 +254,8 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   border: none;
+  outline: none;
+  display: block;
 }
 
 /* Hidden SEO content - visible to crawlers but not users */

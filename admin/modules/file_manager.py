@@ -192,7 +192,7 @@ def generate_vue_wrapper(folder_path, main_domain, port=3000, backend_port=3001)
         with open(vue_dir / 'package.json', 'w', encoding='utf-8') as f:
             f.write(content)
         
-        # vite.config.js
+        # vite.config.js (reads mainDomain from _wcloner/landing.json at runtime)
         shutil.copy(template_dir / 'vite.config.js', vue_dir / 'vite.config.js')
         
         # Backend server.js

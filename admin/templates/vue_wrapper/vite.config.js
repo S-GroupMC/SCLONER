@@ -9,10 +9,22 @@ const EXCLUDE_DIRS = ['vue-app', 'node_modules', '_wcloner', '.git', '_site']
 // Site content is in project root (wget creates domain folders like eagles.com/, shop.eagles.com/)
 const PROJECT_DIR = path.resolve(__dirname, '..')
 
+// Read main domain from _wcloner/landing.json (single source of truth)
+function getMainDomainFromConfig() {
+  const configPath = path.join(PROJECT_DIR, '_wcloner', 'landing.json')
+  try {
+    if (fs.existsSync(configPath)) {
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      return data.domain || null
+    }
+  } catch (e) {}
+  return null
+}
+
 // Detect domain folders once at startup
 function detectDomains() {
   const domains = []
-  let mainDomain = null
+  let mainDomain = getMainDomainFromConfig()
   const items = fs.readdirSync(PROJECT_DIR)
   for (const item of items) {
     if (EXCLUDE_DIRS.includes(item)) continue
@@ -20,16 +32,99 @@ function detectDomains() {
     try {
       if (fs.statSync(itemPath).isDirectory() && item.includes('.')) {
         domains.push(item)
-        if (!mainDomain && fs.existsSync(path.join(itemPath, 'index.html'))) {
-          mainDomain = item
-        }
       }
     } catch (e) {}
+  }
+  // Fallback: folder name, then first domain with index.html
+  if (!mainDomain || !domains.includes(mainDomain)) {
+    const folderName = path.basename(PROJECT_DIR)
+    if (domains.includes(folderName)) {
+      mainDomain = folderName
+    } else {
+      for (const d of domains) {
+        if (fs.existsSync(path.join(PROJECT_DIR, d, 'index.html'))) {
+          mainDomain = d
+          break
+        }
+      }
+    }
   }
   return { domains, mainDomain }
 }
 
 const { domains, mainDomain } = detectDomains()
+
+// Build subdomain mapping: subdomain prefix -> domain folder
+// e.g. mainDomain=maxkorzh.live, folder maxkorzh.asia -> subdomain "asia"
+// Only maps domains that share the same base name as mainDomain
+function buildSubdomainMap(domains, mainDomain) {
+  const map = {} // { 'asia': 'maxkorzh.asia', 'eu': 'maxkorzh.eu' }
+  const reverseMap = {} // { 'maxkorzh.asia': 'asia' }
+  if (!mainDomain) return { map, reverseMap }
+  
+  // Extract base name: maxkorzh.live -> maxkorzh
+  const mainParts = mainDomain.split('.')
+  const mainBase = mainParts.length >= 2 ? mainParts.slice(0, -1).join('.') : null
+  if (!mainBase) return { map, reverseMap }
+  
+  for (const domain of domains) {
+    if (domain === mainDomain) continue
+    const domParts = domain.split('.')
+    // Check if domain starts with the same base: maxkorzh.asia -> base=maxkorzh
+    const domBase = domParts.length >= 2 ? domParts.slice(0, -1).join('.') : null
+    if (domBase === mainBase && domParts.length >= 2) {
+      // maxkorzh.asia -> subdomain = asia (last part = TLD)
+      const sub = domParts[domParts.length - 1]
+      map[sub] = domain
+      reverseMap[domain] = sub
+    } else if (domain.endsWith('.' + mainDomain)) {
+      // manual.maxkorzh.live -> subdomain = manual
+      const sub = domain.slice(0, -(mainDomain.length + 1))
+      map[sub] = domain
+      reverseMap[domain] = sub
+    } else {
+      // Check if domain ends with base (e.g. manual.maxkorzh.asia)
+      // manual.maxkorzh.asia -> base part = maxkorzh, sub = manual.asia
+      if (domParts.length > 2) {
+        const innerBase = domParts.slice(0, -1).join('.')
+        if (innerBase.endsWith(mainBase) || innerBase.startsWith(mainBase)) {
+          // Take parts that differ: manual.maxkorzh.asia -> manual + asia
+          const prefix = innerBase.replace(mainBase, '').replace(/^\.|\.$/g, '')
+          const tld = domParts[domParts.length - 1]
+          const sub = prefix ? `${prefix}.${tld}` : tld
+          map[sub] = domain
+          reverseMap[domain] = sub
+        }
+      }
+    }
+  }
+  return { map, reverseMap }
+}
+
+const { map: subdomainMap, reverseMap: domainToSubdomain } = buildSubdomainMap(domains, mainDomain)
+
+// Helper: extract subdomain from Host header
+function getSubdomainFromHost(host) {
+  if (!host) return null
+  // Remove port
+  const hostname = host.split(':')[0]
+  // localhost subdomains: asia.localhost -> asia
+  if (hostname.endsWith('.localhost') || hostname.endsWith('.127.0.0.1')) {
+    const sub = hostname.split('.').slice(0, -1).join('.')
+    return sub || null
+  }
+  // Custom domain subdomains: asia.maxkorzh.live -> asia
+  if (mainDomain && hostname.endsWith('.' + mainDomain.split('.').slice(-2).join('.'))) {
+    const baseSuffix = '.' + mainDomain.split('.').slice(-2).join('.')
+    const sub = hostname.slice(0, -baseSuffix.length)
+    // Remove mainDomain base prefix if present
+    const mainBase = mainDomain.split('.').slice(0, -1).join('.')
+    if (sub !== mainBase) {
+      return sub.replace(mainBase + '.', '')
+    }
+  }
+  return null
+}
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -183,6 +278,28 @@ export default defineConfig({
     {
       name: 'serve-site',
       configureServer(server) {
+        // Middleware: Subdomain routing
+        // asia.localhost:3000 -> serve from maxkorzh.asia/ folder
+        server.middlewares.use((req, res, next) => {
+          const host = req.headers.host || ''
+          const sub = getSubdomainFromHost(host)
+          if (sub && subdomainMap[sub]) {
+            const domainFolder = subdomainMap[sub]
+            let urlPath = decodeURIComponent(req.url || '/').split('?')[0]
+            
+            // Prepend domain folder to path if not already there
+            if (!urlPath.startsWith('/' + domainFolder + '/') && !urlPath.startsWith('/' + domainFolder)) {
+              const newPath = '/' + domainFolder + urlPath
+              const filePath = findFile(newPath)
+              if (filePath) {
+                serveFile(filePath, res)
+                return
+              }
+            }
+          }
+          next()
+        })
+        
         // Middleware: Block tracking/analytics endpoints (return empty JS or 204)
         server.middlewares.use((req, res, next) => {
           const urlPath = decodeURIComponent(req.url || '/').split('?')[0]

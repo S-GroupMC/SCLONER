@@ -197,3 +197,7 @@ logs/
 test_vue_generation.py
 *.test.js
 *.spec.js
+
+# Runtime data
+admin/jobs.json
+admin/_wcloner_servers.json
