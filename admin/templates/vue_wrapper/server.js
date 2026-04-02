@@ -163,6 +163,25 @@ function findFile(urlPath) {
     }
   }
   
+  // Strategy 7: Re-encode brackets for Next.js dynamic routes ([lang] -> %5Blang%5D on disk)
+  const reEncoded = basePath.replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+  if (reEncoded !== basePath) {
+    const reNorm = path.normalize(reEncoded).replace(/\\/g, '/');
+    found = tryFile(path.join(PROJECT_DIR, reNorm));
+    if (found) return found;
+    
+    if (mainDomain && !reNorm.startsWith('/' + mainDomain)) {
+      found = tryFile(path.join(PROJECT_DIR, mainDomain, reNorm));
+      if (found) return found;
+    }
+    
+    for (const domain of domains) {
+      if (reNorm.startsWith('/' + domain)) continue;
+      found = tryFile(path.join(PROJECT_DIR, domain, reNorm));
+      if (found) return found;
+    }
+  }
+  
   return null;
 }
 
@@ -215,6 +234,15 @@ const server = http.createServer((req, res) => {
         const re = new RegExp(`(https?:)?//${escaped}/`, 'g');
         html = html.replace(re, `/${domain}/`);
       }
+      // Neutralize NEXT_REDIRECT in RSC flight data (keep all scripts for hydration)
+      html = html.replace(/(\d+):E\{[^}]*NEXT_REDIRECT[^}]*\}/g, '$1:null');
+      // Inject RSC interceptor + navigation fix + cookie popup
+      const interceptor = `<script>(function(){var arr=[];arr.push=function(){for(var i=0;i<arguments.length;i++){var e=arguments[i];if(Array.isArray(e)&&e[1]&&typeof e[1]==='string'){e[1]=e[1].replace(/\\d+:E\\{[^}]*NEXT_REDIRECT[^}]*\\}\\n?/g,'');}}return Array.prototype.push.apply(this,arguments);};self.__next_f=arr;document.addEventListener('click',function(e){var a=e.target.closest('a[href]');if(a&&a.href&&a.href.startsWith(location.origin)){e.preventDefault();e.stopPropagation();location.href=a.href;}var b=e.target.closest('button');if(!b)return;var fc=b.closest('[class*="FloatingCookie"]');if(fc){while(fc.parentElement&&fc.parentElement.closest('[class*="FloatingCookie"]'))fc=fc.parentElement.closest('[class*="FloatingCookie"]');fc.style.display='none';}},true);})();</script>`;
+      html = html.replace(/<script/i, interceptor + '<script');
+      // Remove tracking scripts only
+      html = html.replace(/<script[^>]*src="[^"]*cdn-cgi[^"]*"[^>]*><\/script>/gi, '');
+      html = html.replace(/<script[^>]*src="[^"]*cloudflareinsights[^"]*"[^>]*><\/script>/gi, '');
+      html = html.replace(/<script[^>]*src="[^"]*googletagmanager[^"]*"[^>]*><\/script>/gi, '');
       content = Buffer.from(html, 'utf-8');
     }
     

@@ -195,7 +195,25 @@ function findFile(urlPath) {
     if (fs.existsSync(check) && fs.statSync(check).isFile()) return check
   }
 
-  // Strategy 6: Try assets/cache_image/ fallback for missing images
+  // Strategy 6b: Re-encode brackets for Next.js dynamic routes ([lang] -> %5Blang%5D on disk)
+  const reEncoded = normalized.replace(/\[/g, '%5B').replace(/\]/g, '%5D')
+  if (reEncoded !== normalized) {
+    check = path.join(PROJECT_DIR, reEncoded)
+    if (fs.existsSync(check) && fs.statSync(check).isFile()) return check
+
+    if (mainDomain && !reEncoded.startsWith('/' + mainDomain)) {
+      check = path.join(PROJECT_DIR, mainDomain, reEncoded)
+      if (fs.existsSync(check) && fs.statSync(check).isFile()) return check
+    }
+
+    for (const domain of domains) {
+      if (reEncoded.startsWith('/' + domain)) continue
+      check = path.join(PROJECT_DIR, domain, reEncoded)
+      if (fs.existsSync(check) && fs.statSync(check).isFile()) return check
+    }
+  }
+
+  // Strategy 7: Try assets/cache_image/ fallback for missing images
   // wget sometimes saves images to cache_image instead of original path
   if (mainDomain && normalized.includes('/image/')) {
     const cachePath = normalized.replace('/image/', '/assets/cache_image/image/')
@@ -237,14 +255,35 @@ function serveFile(filePath, res) {
     // Match both https://domain/ and /domain/ formats
     html = html.replace(/<base\s+href="[^"]+"\s*\/?>/gi, `<base href="/__raw/">`)
     
-    // Remove tracking scripts (external)
+    // Neutralize NEXT_REDIRECT in RSC flight data (keep all scripts for hydration)
+    html = html.replace(/(\d+):E\{[^}]*NEXT_REDIRECT[^}]*\}/g, '$1:null')
+    
+    // Inject RSC interceptor BEFORE first script to catch NEXT_REDIRECT at runtime
+    // Also force full-page reloads for navigation (RSC fetch won't work on static clone)
+    const interceptor = `<script>
+(function(){
+  // Intercept self.__next_f to filter NEXT_REDIRECT entries at runtime
+  var arr=[];arr.push=function(){for(var i=0;i<arguments.length;i++){var e=arguments[i];if(Array.isArray(e)&&e[1]&&typeof e[1]==='string'){e[1]=e[1].replace(/\\d+:E\\{[^}]*NEXT_REDIRECT[^}]*\\}\\n?/g,'');}}return Array.prototype.push.apply(this,arguments);};self.__next_f=arr;
+  // Force full page reloads for internal links (Next.js RSC navigation won't work)
+  document.addEventListener('click',function(e){
+    var a=e.target.closest('a[href]');
+    if(a&&a.href&&a.href.startsWith(location.origin)){e.preventDefault();e.stopPropagation();location.href=a.href;}
+    // Cookie popup close
+    var b=e.target.closest('button');
+    if(!b)return;
+    var fc=b.closest('[class*="FloatingCookie"]');
+    if(fc){while(fc.parentElement&&fc.parentElement.closest('[class*="FloatingCookie"]'))fc=fc.parentElement.closest('[class*="FloatingCookie"]');fc.style.display='none';}
+  },true);
+})();
+</script>`
+    html = html.replace(/<script/i, interceptor + '<script')
+    
+    // Remove tracking scripts only
     html = html.replace(/<script[^>]*src="[^"]*cdn-cgi[^"]*"[^>]*><\/script>/gi, '')
     html = html.replace(/<script[^>]*src="[^"]*cloudflareinsights[^"]*"[^>]*><\/script>/gi, '')
     html = html.replace(/<script[^>]*src="[^"]*googletagmanager[^"]*"[^>]*><\/script>/gi, '')
-    // Remove inline GTM/dataLayer scripts (non-greedy, script content only)
-    html = html.replace(/<script[^>]*>([^<]|<(?!\/script))*googletagmanager([^<]|<(?!\/script))*<\/script>/gi, '')
-    html = html.replace(/<script[^>]*>([^<]|<(?!\/script))*dataLayer([^<]|<(?!\/script))*<\/script>/gi, '')
-    html = html.replace(/<noscript[^>]*>([^<]|<(?!\/noscript))*googletagmanager([^<]|<(?!\/noscript))*<\/noscript>/gi, '')
+    // Remove GTM noscript containers
+    html = html.replace(/<noscript[^>]*>[\s\S]*?googletagmanager[\s\S]*?<\/noscript>/gi, '')
     
     // Remove v-loading class from body (don't remove preloader div - regex is too greedy)
     html = html.replace(/class="v-loading"/gi, 'class=""')
@@ -262,6 +301,10 @@ function serveFile(filePath, res) {
 .home__media { opacity: 1 !important; }
 </style>`
     html = html.replace(/<\/head>/i, preloaderCSS + '</head>')
+    
+    // Inject cookie popup close script (after all original scripts removed)
+    const cookieCloseScript = `<script>document.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;var c=b.closest('[class*="floating-cookie-container"],[class*="cookie-consent"],[class*="cookie-banner"],[class*="CookieBanner"]');if(c){c.style.display="none";return;}var fc=b.closest('[class*="FloatingCookie"]');if(fc){while(fc.parentElement&&fc.parentElement.closest('[class*="FloatingCookie"]'))fc=fc.parentElement.closest('[class*="FloatingCookie"]');fc.style.display="none";}});</script>`
+    html = html.replace(/<\/body>/i, cookieCloseScript + '</body>')
     
     content = Buffer.from(html, 'utf-8')
   }
