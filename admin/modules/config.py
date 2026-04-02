@@ -52,7 +52,8 @@ def save_jobs():
             'output_lines': job.output_lines[-100:],
             'started_at': job.started_at.isoformat() if job.started_at else None,
             'finished_at': job.finished_at.isoformat() if job.finished_at else None,
-            'folder_name': job.folder_name
+            'folder_name': job.folder_name,
+            'pre_file_count': getattr(job, 'pre_file_count', 0)
         }
     try:
         with open(JOBS_FILE, 'w') as f:
@@ -83,6 +84,7 @@ def load_jobs():
             job.files_downloaded = data.get('files_downloaded', 0)
             job.total_size = data.get('total_size', 0)
             job.output_lines = data.get('output_lines', [])
+            job.pre_file_count = data.get('pre_file_count', 0)
             if data.get('started_at'):
                 job.started_at = datetime.fromisoformat(data['started_at'])
             if data.get('finished_at'):

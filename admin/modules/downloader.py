@@ -133,6 +133,7 @@ class WgetJob:
         self.finished_at = None
         self.stop_requested = False
         self.preview_image = None
+        self.pre_file_count = 0  # Количество файлов ДО начала загрузки
         self.folder_name = folder_name or job_id
         self.output_dir = DOWNLOADS_DIR / self.folder_name
         self.output_dir.mkdir(exist_ok=True)
@@ -490,25 +491,50 @@ def build_puppeteer_command(job):
 
 
 def update_job_stats(job):
-    """Update job statistics from output - count only downloaded site content"""
+    """Update job statistics from output - count files for the target domain"""
     if not job.output_dir.exists():
         return
     
     EXCLUDE_DIRS = {'vue-app', '_wcloner', 'node_modules', 'hts-cache', '.git'}
     EXCLUDE_FILES = {'backend-server.js', 'preview.png'}
     
+    # Определяем целевой домен из URL задачи
+    target_domain = None
+    try:
+        parsed = urlparse(job.url)
+        target_domain = parsed.netloc
+        if target_domain.startswith('www.'):
+            target_domain = target_domain[4:]
+    except:
+        pass
+    
+    # Если есть целевой домен и его папка — считаем только её
+    # Это предотвращает подсчёт чужих файлов при supplementary downloads
+    target_dir = None
+    if target_domain:
+        candidate = job.output_dir / target_domain
+        if candidate.exists() and candidate.is_dir():
+            target_dir = candidate
+        else:
+            # Попробуем www. вариант
+            candidate = job.output_dir / f'www.{target_domain}'
+            if candidate.exists() and candidate.is_dir():
+                target_dir = candidate
+    
     try:
         count = 0
         total_bytes = 0
-        for f in job.output_dir.rglob('*'):
+        scan_dir = target_dir if target_dir else job.output_dir
+        
+        for f in scan_dir.rglob('*'):
             if not f.is_file():
                 continue
             # Skip excluded directories
-            parts = f.relative_to(job.output_dir).parts
+            parts = f.relative_to(job.output_dir).parts if not target_dir else f.relative_to(target_dir).parts
             if any(p in EXCLUDE_DIRS for p in parts):
                 continue
-            # Skip excluded root-level files
-            if len(parts) == 1 and parts[0] in EXCLUDE_FILES:
+            # Skip excluded root-level files (только для полного сканирования)
+            if not target_dir and len(parts) == 1 and parts[0] in EXCLUDE_FILES:
                 continue
             count += 1
             total_bytes += f.stat().st_size
@@ -703,6 +729,10 @@ def run_wget_job(job_id):
     job.status = 'running'
     job.started_at = datetime.now()
     
+    # Запоминаем количество файлов ДО начала загрузки
+    update_job_stats(job)
+    job.pre_file_count = job.files_downloaded
+    
     # Запоминаем существующие папки ДО начала любого скачивания
     pre_existing_dirs = set()
     if job.output_dir.exists():
@@ -774,14 +804,17 @@ def run_wget_job(job_id):
         cleanup_external_domains(job, pre_existing_dirs)
         update_job_stats(job)  # Update stats before checking
         
-        job.output_lines.append(f"[Debug] Files downloaded: {job.files_downloaded}")
+        new_files = job.files_downloaded - job.pre_file_count
+        job.output_lines.append(f"[Debug] Files: {job.files_downloaded} (new: {new_files})")
         
         # wget2 return codes: 0=success, 8=some files failed (partial success)
-        # Consider job completed if we downloaded any files
-        if returncode == 0 or job.files_downloaded > 0:
+        # Определяем успешность по количеству НОВЫХ файлов
+        if returncode == 0 or new_files > 0:
             job.status = 'completed'
         else:
             job.status = 'failed'
+            if returncode != 0:
+                job.output_lines.append(f"[Debug] Failed: exit code {returncode}, no new files")
         job.finished_at = datetime.now()
         update_job_stats(job)
         
@@ -879,6 +912,11 @@ def start_job_process(job_id):
     job.output_lines.append(f"Command: {' '.join(cmd)}")
     job.status = 'running'
     job.started_at = datetime.now()
+    
+    # Запоминаем количество файлов ДО скачивания для определения новых
+    update_job_stats(job)
+    job.pre_file_count = job.files_downloaded
+    job.output_lines.append(f"[Process] Pre-existing files for target domain: {job.pre_file_count}")
     save_jobs()
     
     # Запоминаем существующие папки ДО скачивания, чтобы cleanup не удалил их
@@ -962,18 +1000,21 @@ def start_job_process(job_id):
             cleanup_external_domains(job, pre_existing_dirs)
             update_job_stats(job)
             
-            job.output_lines.append(f"[Process] Files found: {job.files_downloaded}")
+            new_files = job.files_downloaded - job.pre_file_count
+            job.output_lines.append(f"[Process] Files found: {job.files_downloaded} (new: {new_files})")
             
             # wget2 exit codes: 0=success, 4=network error, 8=server error (403/404)
-            # Partial success: if files were downloaded, consider completed
+            # Определяем успешность по количеству НОВЫХ файлов, а не всех в папке
             if job.stop_requested:
                 job.status = 'stopped'
-            elif returncode == 0 or job.files_downloaded > 0:
+            elif returncode == 0 or new_files > 0:
                 job.status = 'completed'
                 if returncode != 0:
-                    job.output_lines.append(f"[Process] Partial success: exit code {returncode} but {job.files_downloaded} files downloaded")
+                    job.output_lines.append(f"[Process] Partial success: exit code {returncode}, new files: {new_files}")
             else:
                 job.status = 'failed'
+                if returncode != 0:
+                    job.output_lines.append(f"[Process] Failed: exit code {returncode}, no new files downloaded")
             job.finished_at = datetime.now()
             
             # Auto-generate preview

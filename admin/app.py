@@ -108,6 +108,17 @@ async def create_job(request: Request):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         folder_name = f"{domain}_{timestamp}"
     
+    # Дефолтные опции для supplementary downloads (дозагрузка домена)
+    if folder_name and not options:
+        options = {
+            'recursive': True,
+            'depth': 3,
+            'page_requisites': True,
+            'span_hosts': False,
+            'no_parent': True,
+            'ignore_robots': True
+        }
+    
     job_id = str(uuid.uuid4())[:8]
     job = WgetJob(job_id, url, options, use_wget2, folder_name, engine)
     jobs[job_id] = job
