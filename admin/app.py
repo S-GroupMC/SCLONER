@@ -1017,6 +1017,28 @@ async def fix_html_scan_endpoint(folder_name):
     return fix_wget_corrupted_html(folder_path, dry_run=True)
 
 
+@app.post('/api/downloads/{folder_name}/fix-external-links-scan')
+async def fix_external_links_scan_endpoint(folder_name):
+    """Сканирование: найти внешние ссылки которые можно заменить на локальные (dry-run)."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    from modules.html_fixer import fix_external_links_to_local
+    return fix_external_links_to_local(folder_path, dry_run=True)
+
+
+@app.post('/api/downloads/{folder_name}/fix-external-links')
+async def fix_external_links_endpoint(folder_name):
+    """Применить: заменить внешние ссылки на локальные пути."""
+    folder_path = DOWNLOADS_DIR / folder_name
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail={'error': 'Folder not found'})
+    
+    from modules.html_fixer import fix_external_links_to_local
+    return fix_external_links_to_local(folder_path, dry_run=False)
+
+
 @app.get('/api/downloads/{folder_name}/broken-links')
 async def get_broken_links(folder_name):
     """Получить список битых ссылок и анализ возможности исправления."""

@@ -292,10 +292,115 @@ def check_site_integrity(folder_path):
     return result
 
 
-def scan_site_sync(url, max_pages=50):
-    """Synchronous site scan - find all subdomains and create a link map"""
-    import requests
+def _extract_all_urls_from_html(html_text, base_url):
+    """
+    Извлекает ВСЕ URL из HTML: теги, атрибуты, CSS url(), inline styles,
+    srcset, meta content, скрипты — полный парсинг.
+    Возвращает список абсолютных URL.
+    """
+    import re
     from bs4 import BeautifulSoup
+    
+    parsed_base = urlparse(base_url)
+    urls = set()
+    
+    def normalize_url(href):
+        """Нормализует URL в абсолютный"""
+        if not href or len(href) < 3:
+            return None
+        href = href.strip()
+        if href.startswith(('data:', 'javascript:', 'mailto:', 'tel:', '#', '{', '$', 'blob:')):
+            return None
+        if href.startswith('//'):
+            href = 'https:' + href
+        elif href.startswith('/'):
+            href = f"{parsed_base.scheme}://{parsed_base.netloc}{href}"
+        elif not href.startswith(('http://', 'https://')):
+            return None
+        # Убираем мусор в конце
+        href = href.rstrip('.,;:!?)]\'"')
+        return href if len(href) > 10 else None
+    
+    soup = BeautifulSoup(html_text, 'html.parser')
+    
+    # 1. Все теги с URL-атрибутами
+    url_attrs = ['href', 'src', 'data-src', 'data-href', 'data-url', 'data-image',
+                 'data-background', 'data-poster', 'data-bg', 'data-lazy-src',
+                 'data-original', 'data-srcset', 'poster', 'action',
+                 'data-background-image', 'data-thumb', 'data-video-src']
+    
+    for tag in soup.find_all(True):
+        for attr in url_attrs:
+            val = tag.get(attr)
+            if val:
+                u = normalize_url(val)
+                if u:
+                    urls.add(u)
+        
+        # srcset — может содержать несколько URL через запятую
+        srcset = tag.get('srcset')
+        if srcset:
+            for part in srcset.split(','):
+                src_url = part.strip().split()[0] if part.strip() else ''
+                u = normalize_url(src_url)
+                if u:
+                    urls.add(u)
+        
+        # meta content с URL
+        if tag.name == 'meta':
+            content = tag.get('content', '')
+            if content and ('http://' in content or 'https://' in content or '//' in content):
+                # Извлекаем URL из content
+                found = re.findall(r'https?://[^\s"\'<>\)\],;]+', content)
+                for f in found:
+                    u = normalize_url(f)
+                    if u:
+                        urls.add(u)
+        
+        # inline style с url()
+        style = tag.get('style', '')
+        if style and 'url(' in style:
+            css_urls = re.findall(r'url\(["\']?([^"\')\s]+)["\']?\)', style)
+            for cu in css_urls:
+                u = normalize_url(cu)
+                if u:
+                    urls.add(u)
+    
+    # 2. CSS блоки <style> — url()
+    for style_tag in soup.find_all('style'):
+        if style_tag.string:
+            css_urls = re.findall(r'url\(["\']?([^"\')\s]+)["\']?\)', style_tag.string)
+            for cu in css_urls:
+                u = normalize_url(cu)
+                if u:
+                    urls.add(u)
+    
+    # 3. Прямые URL в <script> блоках и в HTML тексте
+    full_text = html_text
+    direct_urls = re.findall(r'https?://[a-zA-Z0-9][^\s"\'<>\)\],;}{]+', full_text)
+    for du in direct_urls:
+        du = du.rstrip('.,;:!?)]\'"\\')
+        u = normalize_url(du)
+        if u:
+            urls.add(u)
+    
+    # 4. Protocol-relative URL в тексте
+    proto_urls = re.findall(r'//[a-zA-Z0-9][a-zA-Z0-9._-]+\.[a-zA-Z]{2,}[^\s"\'<>\)\],;}{]*', full_text)
+    for pu in proto_urls:
+        pu = pu.rstrip('.,;:!?)]\'"\\')
+        u = normalize_url(pu)
+        if u:
+            urls.add(u)
+    
+    return list(urls)
+
+
+def scan_site_sync(url, max_pages=50):
+    """
+    Полное сканирование сайта — находит ВСЕ домены, поддомены, CDN, ссылки.
+    Парсит: теги, атрибуты, CSS url(), inline styles, srcset, meta, скрипты.
+    """
+    import requests
     import re
     
     if not url:
@@ -312,7 +417,7 @@ def scan_site_sync(url, max_pages=50):
     else:
         base_domain = main_domain
     
-    # Extract root domain
+    # Извлекаем корневой домен
     parts = base_domain.split('.')
     if len(parts) >= 2:
         root_domain = '.'.join(parts[-2:])
@@ -327,8 +432,45 @@ def scan_site_sync(url, max_pages=50):
     pages_scanned = 0
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
+    
+    def add_domain(href):
+        """Добавляет домен из URL в результат"""
+        try:
+            link_parsed = urlparse(href)
+            link_domain = link_parsed.netloc
+            
+            if not link_domain or '.' not in link_domain:
+                return
+            # Убираем порт если есть
+            if ':' in link_domain:
+                link_domain = link_domain.split(':')[0]
+            # Пропускаем localhost/IP
+            if link_domain in ('localhost', '127.0.0.1') or link_domain.startswith('192.168.'):
+                return
+            
+            if link_domain not in domains_found:
+                domains_found[link_domain] = {
+                    'domain': link_domain,
+                    'count': 0,
+                    'is_main': link_domain == main_domain or link_domain == f'www.{base_domain}' or link_domain == base_domain,
+                    'is_subdomain': link_domain.endswith(f'.{root_domain}') or link_domain == base_domain or link_domain == root_domain,
+                    'is_related': root_domain in link_domain,
+                    'sample_urls': []
+                }
+            
+            domains_found[link_domain]['count'] += 1
+            if len(domains_found[link_domain]['sample_urls']) < 5:
+                domains_found[link_domain]['sample_urls'].append(href[:200])
+            
+            # Добавляем внутренние ссылки в очередь для обхода
+            if link_domain == main_domain or link_domain.endswith(f'.{root_domain}'):
+                clean_url = f"{link_parsed.scheme}://{link_parsed.netloc}{link_parsed.path}"
+                if clean_url not in visited and clean_url not in to_visit:
+                    to_visit.append(clean_url)
+        except:
+            pass
     
     while to_visit and pages_scanned < max_pages:
         current_url = to_visit.pop(0)
@@ -344,79 +486,71 @@ def scan_site_sync(url, max_pages=50):
             if response.status_code != 200:
                 continue
             
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # Полный парсинг — извлекаем ВСЕ URL из HTML
+            all_urls = _extract_all_urls_from_html(response.text, current_url)
             
-            for tag in soup.find_all(['a', 'link', 'script', 'img', 'iframe', 'source', 'video', 'audio']):
-                href = tag.get('href') or tag.get('src') or tag.get('data-src')
-                if not href:
-                    continue
-                
-                if href.startswith('//'):
-                    href = 'https:' + href
-                elif href.startswith('/'):
-                    href = f"{parsed.scheme}://{parsed.netloc}{href}"
-                elif not href.startswith(('http://', 'https://')):
-                    continue
-                
-                try:
-                    link_parsed = urlparse(href)
-                    link_domain = link_parsed.netloc
-                    
-                    if not link_domain:
-                        continue
-                    
-                    if link_domain not in domains_found:
-                        domains_found[link_domain] = {
-                            'domain': link_domain,
-                            'count': 0,
-                            'is_main': link_domain == main_domain or link_domain == f'www.{base_domain}',
-                            'is_subdomain': link_domain.endswith(f'.{base_domain}') or link_domain == base_domain,
-                            'is_related': root_domain in link_domain,
-                            'sample_urls': []
-                        }
-                    
-                    domains_found[link_domain]['count'] += 1
-                    if len(domains_found[link_domain]['sample_urls']) < 3:
-                        domains_found[link_domain]['sample_urls'].append(href[:100])
-                    
-                    # Add internal links to visit queue
-                    if (link_domain == main_domain or link_domain.endswith(f'.{base_domain}')):
-                        clean_url = f"{link_parsed.scheme}://{link_parsed.netloc}{link_parsed.path}"
-                        if clean_url not in visited and clean_url not in to_visit:
-                            to_visit.append(clean_url)
-                
-                except:
-                    continue
+            for href in all_urls:
+                add_domain(href)
         
         except Exception as e:
+            print(f"[Analyzer] Ошибка сканирования {current_url}: {e}")
             continue
     
-    # Categorize domains
-    main_domains = []
-    related_domains = set()
-    cdn_domains = set()
-    external_domains = set()
+    # Категоризация доменов с использованием паттернов из constants
+    from .constants import TRACKER_PATTERNS, CDN_PATTERNS, OPTIONAL_CDN_PATTERNS
     
-    cdn_patterns = ['cdn', 'static', 'assets', 'images', 'img', 'media', 'fonts', 'cloudfront', 'cloudflare', 'akamai', 'fastly']
+    main_domains = []
+    cdn_domains = []
+    related_domains = []
+    external_domains = []
+    tracker_domains = []
     
     for domain, data in domains_found.items():
+        domain_lower = domain.lower()
+        
+        # 1. Основной домен и поддомены
         if data['is_main'] or data['is_subdomain']:
+            data['category'] = 'main'
+            data['required'] = True
+            data['priority'] = 'critical' if data['is_main'] else 'high'
             main_domains.append(data)
+        # 2. Трекеры — НЕ скачивать
+        elif any(t in domain_lower for t in TRACKER_PATTERNS):
+            data['category'] = 'tracker'
+            data['required'] = False
+            data['priority'] = 'skip'
+            tracker_domains.append(data)
+        # 3. CDN
+        elif any(c in domain_lower for c in CDN_PATTERNS):
+            data['category'] = 'cdn'
+            # Обязательный или опциональный CDN
+            if any(opt in domain_lower for opt in OPTIONAL_CDN_PATTERNS):
+                data['required'] = False
+                data['priority'] = 'optional'
+            else:
+                data['required'] = True
+                data['priority'] = 'high'
+            cdn_domains.append(data)
+        # 4. Связанные домены
         elif data['is_related']:
-            related_domains.add(domain)
-        elif any(p in domain.lower() for p in cdn_patterns):
-            cdn_domains.add(domain)
+            data['category'] = 'related'
+            data['required'] = False
+            data['priority'] = 'medium'
+            related_domains.append(data)
+        # 5. Внешние
         else:
-            external_domains.add(domain)
+            data['category'] = 'external'
+            data['required'] = False
+            data['priority'] = 'low'
+            external_domains.append(data)
     
-    def to_list(domain_set, category):
-        return [{'domain': d, 'category': category, 'count': domains_found.get(d, {}).get('count', 0)} for d in domain_set]
+    # Сортировка по количеству ссылок (больше → важнее)
+    main_domains.sort(key=lambda x: x['count'], reverse=True)
+    cdn_domains.sort(key=lambda x: x['count'], reverse=True)
+    related_domains.sort(key=lambda x: x['count'], reverse=True)
+    external_domains.sort(key=lambda x: x['count'], reverse=True)
     
-    related_list = to_list(related_domains, 'related')
-    cdn_list = to_list(cdn_domains, 'cdn')
-    external_list = to_list(external_domains, 'external')
-    
-    all_domains = main_domains + related_list + cdn_list + external_list
+    all_domains = main_domains + cdn_domains + related_domains + external_domains + tracker_domains
     
     return {
         'base_domain': base_domain,
@@ -426,15 +560,15 @@ def scan_site_sync(url, max_pages=50):
         'subdomains': all_domains,
         'categories': {
             'main': main_domains,
-            'related': related_list,
-            'cdn': cdn_list,
-            'external': external_list
+            'cdn': cdn_domains,
+            'related': related_domains,
+            'external': external_domains + tracker_domains
         },
         'counts': {
             'main': len(main_domains),
-            'related': len(related_list),
-            'cdn': len(cdn_list),
-            'external': len(external_list)
+            'cdn': len(cdn_domains),
+            'related': len(related_domains),
+            'external': len(external_domains) + len(tracker_domains)
         }
     }
 

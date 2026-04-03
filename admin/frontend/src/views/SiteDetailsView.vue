@@ -1403,6 +1403,118 @@
           <p>Нажмите "Сканировать" для анализа HTML файлов</p>
           <p class="text-xs mt-2">Поиск и исправление повреждений от wget2 --convert-links</p>
         </div>
+        
+        <!-- Разделитель -->
+        <hr class="my-6 border-gray-200">
+        
+        <!-- Секция: Исправление внешних ссылок (CDN → локальные) -->
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold text-gray-900 flex items-center">
+            <i class="fas fa-link mr-2 text-cyan-600"></i>
+            Внешние ссылки → Локальные
+          </h2>
+          <div class="flex space-x-2">
+            <button 
+              @click="scanExtLinks()"
+              :disabled="extLinksLoading"
+              class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 text-sm font-medium transition-all disabled:opacity-50"
+            >
+              <i :class="extLinksLoading ? 'fas fa-spinner fa-spin' : 'fas fa-search'" class="mr-2"></i>
+              {{ extLinksLoading ? 'Анализ...' : 'Сканировать' }}
+            </button>
+            <button 
+              @click="applyExtLinks()"
+              :disabled="extLinksApplying || (!extLinksData || extLinksData.total_fixes === 0)"
+              class="px-4 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 text-sm font-medium transition-all disabled:opacity-50"
+            >
+              <i :class="extLinksApplying ? 'fas fa-spinner fa-spin' : 'fas fa-magic'" class="mr-2"></i>
+              {{ extLinksApplying ? 'Замена...' : 'Заменить на локальные' }}
+            </button>
+          </div>
+        </div>
+        
+        <div class="bg-cyan-50 border border-cyan-200 rounded-lg p-3 mb-4 text-sm text-cyan-800">
+          <i class="fas fa-info-circle mr-1"></i>
+          Находит внешние ссылки (CDN, абсолютные URL) в HTML и заменяет на локальные пути, если файлы уже скачаны.
+          Например: <code class="bg-cyan-100 px-1 rounded">https://cdn.example.com/style.css</code> → <code class="bg-cyan-100 px-1 rounded">../cdn.example.com/style.css</code>
+        </div>
+        
+        <div v-if="extLinksLoading || extLinksApplying" class="flex items-center justify-center py-12">
+          <i class="fas fa-spinner fa-spin text-3xl text-cyan-500 mr-3"></i>
+          <span class="text-gray-500">{{ extLinksApplying ? 'Замена внешних ссылок...' : 'Анализ внешних ссылок...' }}</span>
+        </div>
+        
+        <div v-else-if="extLinksData">
+          <div class="grid grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold" :class="extLinksData.links_fixed > 0 ? 'text-cyan-600' : 'text-green-600'">{{ extLinksData.links_fixed || 0 }}</div>
+              <div class="text-xs text-gray-500 mt-1">Ссылок {{ extLinksData.dry_run ? 'можно заменить' : 'заменено' }}</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-gray-700">{{ extLinksData.links_checked || 0 }}</div>
+              <div class="text-xs text-gray-500 mt-1">Ссылок проверено</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-gray-700">{{ extLinksData.modified_files || 0 }}</div>
+              <div class="text-xs text-gray-500 mt-1">Файлов {{ extLinksData.dry_run ? 'затронуто' : 'исправлено' }}</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <div class="text-2xl font-bold text-red-500">{{ extLinksData.links_not_found_locally || 0 }}</div>
+              <div class="text-xs text-gray-500 mt-1">Не найдено локально</div>
+            </div>
+          </div>
+          
+          <div v-if="extLinksData.dry_run && extLinksData.links_fixed > 0" class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-800">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            Это предварительный анализ. Нажмите "Заменить на локальные" чтобы применить изменения.
+          </div>
+          
+          <div v-if="!extLinksData.dry_run && extLinksData.links_fixed > 0" class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4 text-sm text-green-800">
+            <i class="fas fa-check-circle mr-1"></i>
+            Замены применены! Перезапустите Vue сервер чтобы увидеть результат.
+          </div>
+          
+          <div v-if="extLinksData.links_fixed === 0 && extLinksData.links_checked > 0" class="bg-green-50 rounded-lg p-8 text-center">
+            <i class="fas fa-check-circle text-4xl text-green-500 mb-3"></i>
+            <p class="text-green-700 font-medium">Все внешние ссылки актуальны!</p>
+            <p class="text-green-600 text-sm mt-1">Нет ссылок которые можно заменить на локальные</p>
+          </div>
+          
+          <div v-if="extLinksData.files?.length > 0" class="space-y-2 mt-4">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Файлы с заменами:</h3>
+            <div 
+              v-for="(file, idx) in extLinksData.files.slice(0, showAllExtLinksFiles ? 999 : 20)" 
+              :key="idx"
+              class="border rounded-lg p-3 hover:border-cyan-300 transition-colors"
+            >
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                  <i class="fas fa-file-code text-cyan-500"></i>
+                  <span class="text-sm font-mono text-gray-700">{{ file.path }}</span>
+                </div>
+                <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-cyan-100 text-cyan-700">{{ file.fixes }} fix</span>
+              </div>
+              <div v-if="file.details?.length > 0" class="mt-2">
+                <div v-for="(detail, di) in file.details" :key="di" class="bg-gray-900 rounded p-1.5 mt-1 overflow-x-auto">
+                  <code class="text-xs text-green-400 font-mono whitespace-pre-wrap break-all">{{ detail }}</code>
+                </div>
+              </div>
+            </div>
+            <button 
+              v-if="extLinksData.files.length > 20 && !showAllExtLinksFiles"
+              @click="showAllExtLinksFiles = true"
+              class="w-full py-2 text-sm text-cyan-600 hover:text-cyan-700 font-medium"
+            >
+              Показать все {{ extLinksData.files.length }} файлов...
+            </button>
+          </div>
+        </div>
+        
+        <div v-else class="bg-gray-50 rounded-lg p-8 text-center text-gray-500">
+          <i class="fas fa-link text-4xl mb-3"></i>
+          <p>Нажмите "Сканировать" для поиска внешних ссылок</p>
+          <p class="text-xs mt-2">Замена абсолютных CDN URL на локальные пути</p>
+        </div>
       </div>
       
       <!-- ТАБ: Анализ ссылок -->
@@ -2796,6 +2908,10 @@ const htmlFixerData = ref(null)
 const htmlFixerLoading = ref(false)
 const htmlFixerApplying = ref(false)
 const showAllFixerFiles = ref(false)
+const extLinksData = ref(null)
+const extLinksLoading = ref(false)
+const extLinksApplying = ref(false)
+const showAllExtLinksFiles = ref(false)
 const fileTreeData = ref(null)
 const fileTreeLoading = ref(false)
 const expandedFolders = ref({})
@@ -3837,6 +3953,37 @@ async function applyHtmlFixes() {
   }
 }
 
+async function scanExtLinks() {
+  extLinksLoading.value = true
+  extLinksData.value = null
+  showAllExtLinksFiles.value = false
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/fix-external-links-scan`, { method: 'POST' })
+    extLinksData.value = data
+  } catch (err) {
+    console.error('Error scanning external links:', err)
+    showError('Ошибка сканирования внешних ссылок: ' + err.message)
+  } finally {
+    extLinksLoading.value = false
+  }
+}
+
+async function applyExtLinks() {
+  extLinksApplying.value = true
+  try {
+    const data = await fetchJson(`/api/downloads/${folderName.value}/fix-external-links`, { method: 'POST' })
+    extLinksData.value = data
+    if (data.total_fixes > 0) {
+      showSuccess(`Заменено ${data.links_fixed} внешних ссылок на локальные в ${data.modified_files} файлах`)
+    }
+  } catch (err) {
+    console.error('Error fixing external links:', err)
+    showError('Ошибка исправления внешних ссылок: ' + err.message)
+  } finally {
+    extLinksApplying.value = false
+  }
+}
+
 function trackerTypeColor(type) {
   const colors = {
     'Google Tag Manager': 'bg-blue-100 text-blue-700',
@@ -4035,7 +4182,14 @@ async function generateThumbnail() {
 function redownloadSite() {
   // Устанавливаем текущий движок сайта как выбранный по умолчанию
   selectedEngine.value = siteData.value.engine || 'wget2'
-  showEngineModal.value = true
+  // Открываем wizard с анализатором — сначала сканируем, потом выбираем домены
+  showDownloadWizard.value = true
+  wizardStep.value = 1
+  scanResult.value = null
+  scanStatus.value = 'idle'
+  selectedDomains.value = {}
+  domainEngines.value = {}
+  startScan()
 }
 
 async function confirmRedownload() {

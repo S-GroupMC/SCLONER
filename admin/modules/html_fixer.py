@@ -13,6 +13,7 @@ Usage:
     from admin.modules.html_fixer import fix_wget_corrupted_html
     stats = fix_wget_corrupted_html('/path/to/downloads/sitename')
 """
+import os
 import re
 import logging
 from pathlib import Path
@@ -346,4 +347,287 @@ def fix_wget_corrupted_html(output_dir, dry_run: bool = False) -> dict:
                 logger.info(f'[html_fixer] Fixed {rel_path}: {file_fixes} corruptions')
     
     logger.info(f'[html_fixer] Done: {stats["total_fixes"]} fixes in {stats["modified_files"]} files')
+    return stats
+
+
+def _build_local_files_index(output_dir: Path, domains: list, exclude_dirs: set) -> dict:
+    """
+    Строит индекс всех локальных файлов для быстрого поиска.
+    Ключ — путь от домена (например 'cdn/shop/files/image.jpg')
+    Значение — относительный путь от output_dir (например 'shop.domain.com/cdn/shop/files/image.jpg')
+    """
+    index = {}
+    # Также строим индекс по имени файла для нечёткого поиска
+    name_index = {}
+    
+    for domain in domains:
+        domain_dir = output_dir / domain
+        if not domain_dir.is_dir():
+            continue
+        for f in domain_dir.rglob('*'):
+            if not f.is_file():
+                continue
+            if any(part in exclude_dirs for part in f.parts):
+                continue
+            rel_from_output = str(f.relative_to(output_dir))
+            rel_from_domain = str(f.relative_to(domain_dir))
+            
+            # Индекс по полному пути внутри домена
+            index[f'{domain}/{rel_from_domain}'] = rel_from_output
+            # Индекс по пути без домена (для CDN ссылок)
+            index[rel_from_domain] = rel_from_output
+            # Индекс по имени файла
+            fname = f.name
+            if fname not in name_index:
+                name_index[fname] = []
+            name_index[fname].append(rel_from_output)
+    
+    return index, name_index
+
+
+def _find_local_for_url(url: str, output_dir: Path, file_index: dict, name_index: dict, domains: list) -> str:
+    """
+    Пытается найти локальный файл для внешнего URL.
+    Возвращает относительный путь от output_dir или None.
+    """
+    try:
+        parsed = urlparse(url)
+        url_domain = parsed.netloc
+        url_path = parsed.path.lstrip('/')
+        
+        if not url_path:
+            return None
+        
+        # 1. Прямой поиск: domain/path (если домен был скачан в свою папку)
+        key1 = f'{url_domain}/{url_path}'
+        if key1 in file_index:
+            return file_index[key1]
+        
+        # 2. Поиск по пути внутри любого домена
+        if url_path in file_index:
+            return file_index[url_path]
+        
+        # 3. Поиск по имени файла (последний сегмент пути)
+        filename = url_path.split('/')[-1]
+        if filename and filename in name_index:
+            candidates = name_index[filename]
+            if len(candidates) == 1:
+                return candidates[0]
+            # Если несколько кандидатов — ищем по максимальному совпадению пути
+            url_parts = url_path.split('/')
+            best_match = None
+            best_score = 0
+            for candidate in candidates:
+                cand_parts = candidate.split('/')
+                # Считаем совпадающие сегменты с конца
+                score = 0
+                for u, c in zip(reversed(url_parts), reversed(cand_parts)):
+                    if u == c:
+                        score += 1
+                    else:
+                        break
+                if score > best_score:
+                    best_score = score
+                    best_match = candidate
+            if best_match and best_score >= 1:
+                return best_match
+        
+        # 4. Проверяем физическое существование файла в папке домена
+        for domain in domains:
+            possible = output_dir / domain / url_path
+            if possible.exists() and possible.is_file():
+                return str(possible.relative_to(output_dir))
+        
+        return None
+    except Exception:
+        return None
+
+
+def fix_external_links_to_local(output_dir, dry_run: bool = False, check_online: bool = False) -> dict:
+    """
+    Проверяет внешние ссылки (CDN, абсолютные URL) в HTML файлах.
+    Если файл есть локально — заменяет абсолютный URL на локальный путь.
+    Опционально проверяет 404 онлайн.
+    
+    Args:
+        output_dir: Путь к папке скачанного сайта
+        dry_run: Если True — только показать что будет исправлено
+        check_online: Если True — проверять 404 онлайн перед заменой
+    
+    Returns:
+        Статистика исправлений
+    """
+    import requests
+    
+    output_dir = Path(output_dir)
+    
+    if not output_dir.exists():
+        return {'error': 'Directory not found'}
+    
+    domains = detect_domains(output_dir)
+    if not domains:
+        return {'error': 'No domain directories found'}
+    
+    exclude_dirs = {'vue-app', 'node_modules', '_wcloner', '.git', '_site'}
+    
+    # Строим индекс локальных файлов
+    file_index, name_index = _build_local_files_index(output_dir, domains, exclude_dirs)
+    logger.info(f'[html_fixer] Локальный индекс: {len(file_index)} файлов')
+    
+    # Определяем главный домен из landing.json
+    main_domain = None
+    meta_path = output_dir / '_wcloner' / 'landing.json'
+    if meta_path.exists():
+        try:
+            import json
+            with open(meta_path) as f:
+                meta = json.load(f)
+            parsed_url = urlparse(meta.get('url', ''))
+            main_domain = parsed_url.netloc
+        except:
+            pass
+    if not main_domain:
+        main_domain = domains[0] if domains else ''
+    
+    stats = {
+        'total_files': 0,
+        'modified_files': 0,
+        'total_fixes': 0,
+        'links_checked': 0,
+        'links_fixed': 0,
+        'links_404_online': 0,
+        'links_not_found_locally': 0,
+        'dry_run': dry_run,
+        'files': [],
+    }
+    
+    # Regex для поиска внешних URL в атрибутах
+    url_pattern = re.compile(
+        r'((?:href|src|data-src|data-href|data-url|data-image|data-background|poster|srcset|action|content)\s*=\s*["\'])'
+        r'(https?://[^"\'>\s]+)'
+        r'(["\'])',
+        re.IGNORECASE
+    )
+    
+    # Также ищем url() в CSS
+    css_url_pattern = re.compile(
+        r'(url\(["\']?)'
+        r'(https?://[^"\')\s]+)'
+        r'(["\']?\))',
+        re.IGNORECASE
+    )
+    
+    # Кэш проверки онлайн
+    online_cache = {}
+    
+    def check_url_online(url):
+        """Проверяет URL онлайн, возвращает True если 404"""
+        if url in online_cache:
+            return online_cache[url]
+        try:
+            resp = requests.head(url, timeout=5, allow_redirects=True,
+                                headers={'User-Agent': 'Mozilla/5.0'})
+            is_404 = resp.status_code == 404
+            online_cache[url] = is_404
+            return is_404
+        except:
+            online_cache[url] = False
+            return False
+    
+    for domain in domains:
+        domain_dir = output_dir / domain
+        if not domain_dir.is_dir():
+            continue
+        
+        html_files = [
+            f for f in domain_dir.rglob('*.html')
+            if not any(part in exclude_dirs for part in f.parts)
+        ]
+        
+        for html_file in html_files:
+            stats['total_files'] += 1
+            
+            try:
+                content = html_file.read_text(encoding='utf-8', errors='replace')
+            except Exception as e:
+                logger.warning(f'[html_fixer] Ошибка чтения {html_file}: {e}')
+                continue
+            
+            original = content
+            file_fixes = 0
+            fix_details = []
+            
+            # Определяем путь от HTML файла до корня output_dir
+            html_rel = html_file.relative_to(output_dir)
+            html_domain = html_rel.parts[0] if html_rel.parts else ''
+            
+            def replace_url(match):
+                nonlocal file_fixes
+                prefix = match.group(1)
+                url = match.group(2)
+                suffix = match.group(3)
+                
+                stats['links_checked'] += 1
+                
+                # Пропускаем ссылки на тот же домен (уже локальные)
+                try:
+                    url_parsed = urlparse(url)
+                    url_domain = url_parsed.netloc
+                except:
+                    return match.group(0)
+                
+                # Пропускаем ссылки на сам сайт (основной домен/поддомены)
+                if url_domain in domains:
+                    return match.group(0)
+                
+                # Ищем локальный файл
+                local_path = _find_local_for_url(url, output_dir, file_index, name_index, domains)
+                
+                if local_path:
+                    # Вычисляем относительный путь от текущего HTML
+                    try:
+                        from_dir = html_file.parent
+                        to_file = output_dir / local_path
+                        rel_path = os.path.relpath(to_file, from_dir)
+                        # Нормализуем слэши
+                        rel_path = rel_path.replace('\\', '/')
+                    except:
+                        rel_path = '/' + local_path
+                    
+                    file_fixes += 1
+                    stats['links_fixed'] += 1
+                    if len(fix_details) < 10:
+                        fix_details.append(f'{url[:60]} -> {rel_path[:60]}')
+                    
+                    return f'{prefix}{rel_path}{suffix}'
+                else:
+                    stats['links_not_found_locally'] += 1
+                    
+                    # Опциональная проверка 404 онлайн
+                    if check_online:
+                        if check_url_online(url):
+                            stats['links_404_online'] += 1
+                    
+                    return match.group(0)
+            
+            # Заменяем URL в атрибутах
+            content = url_pattern.sub(replace_url, content)
+            
+            # Заменяем URL в CSS url()
+            content = css_url_pattern.sub(replace_url, content)
+            
+            if content != original:
+                if not dry_run:
+                    html_file.write_text(content, encoding='utf-8')
+                stats['modified_files'] += 1
+                stats['total_fixes'] += file_fixes
+                rel_path = str(html_file.relative_to(output_dir))
+                stats['files'].append({
+                    'path': rel_path,
+                    'fixes': file_fixes,
+                    'details': fix_details[:5]
+                })
+                logger.info(f'[html_fixer] Fixed external links {rel_path}: {file_fixes} replacements')
+    
+    logger.info(f'[html_fixer] External links fix done: {stats["total_fixes"]} fixes in {stats["modified_files"]} files')
     return stats
